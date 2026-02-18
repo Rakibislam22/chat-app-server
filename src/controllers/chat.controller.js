@@ -2,26 +2,27 @@ const User = require("../models/User");
 const Conversation = require("../models/Conversation");
 const Message = require("../models/Message");
 
-// @desc    Search users by name or email (for starting a new chat)
-// @route   GET /api/chat/users?search=keyword
+// @desc    Search users by name or email (excludes the requesting user)
+// @route   GET /api/chat/users?q=<query>
 exports.searchUsers = async (req, res) => {
   try {
     const userId = req.user.id;
-    const search = req.query.search || "";
+    const q = (req.query.q || "").trim();
 
-    if (!search.trim()) {
+    if (!q) {
       return res.json([]);
     }
 
+    // Case-insensitive partial match on name OR email, exclude self
     const users = await User.find({
-      _id: { $ne: userId }, // exclude self
+      _id: { $ne: userId },
       $or: [
-        { name: { $regex: search, $options: "i" } },
-        { email: { $regex: search, $options: "i" } },
+        { name: { $regex: q, $options: "i" } },
+        { email: { $regex: q, $options: "i" } },
       ],
     })
       .select("name email avatar")
-      .limit(20);
+      .limit(10);
 
     res.json(users);
   } catch (err) {

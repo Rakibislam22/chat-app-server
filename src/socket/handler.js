@@ -4,14 +4,11 @@
 
 const jwt = require("jsonwebtoken");
 const { redisClient, getIsRedisConnected } = require("../config/redis");
-const Message = require("../models/Message");
-const Conversation = require("../models/Conversation");
-
-// In-memory userId -> socketId map (fallback when Redis is unavailable)
-const onlineUsers = new Map();
 
 const socketHandler = (io) => {
   // --- Socket Authentication Middleware ---
+  // Runs before every connection is established.
+  // Client must pass the JWT as: socket = io(URL, { auth: { token: "..." } })
   io.use((socket, next) => {
     const token = socket.handshake.auth?.token;
 
@@ -21,141 +18,74 @@ const socketHandler = (io) => {
 
     try {
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
-      socket.userId = decoded.id;
+      socket.userId = decoded.id; // attach userId to the socket instance
       next();
     } catch (err) {
       return next(new Error("Authentication error: Invalid token"));
     }
   });
 
-  io.on("connection", async (socket) => {
-    const userId = socket.userId;
-    console.log(`✅ User connected: ${socket.id} (userId: ${userId})`);
+  io.on("connection", (socket) => {
+    console.log(`✅ User connected: ${socket.id} (userId: ${socket.userId})`);
 
-    // ── Register presence ──────────────────────────────────────
-    onlineUsers.set(userId, socket.id);
-
-    if (getIsRedisConnected()) {
-      try {
-        await redisClient.set(`online:${userId}`, socket.id, { EX: 86400 });
-      } catch (err) {
-        console.error("Redis presence set error:", err);
-      }
-    }
-
-    // Notify others this user is online
-    socket.broadcast.emit("user:status", { userId, status: "online" });
-
-    // ── Join personal room for easy targeting ──────────────────
-    socket.join(userId);
-
-    // ── message:send ───────────────────────────────────────────
-    // payload: { conversationId, receiverId, text }
-    socket.on("message:send", async (data, callback) => {
-      try {
-        const { conversationId, receiverId, text } = data;
-
-        if (!conversationId || !receiverId || !text?.trim()) {
-          return callback?.({ error: "Missing fields" });
-        }
-
-        // 1. Save to DB
-        const message = await Message.create({
-          conversationId,
-          sender: userId,
-          text: text.trim(),
-          status: "sent",
-        });
-
-        // 2. Update conversation's lastMessage
-        await Conversation.findByIdAndUpdate(conversationId, {
-          lastMessage: {
-            text: text.trim(),
-            sender: userId,
-            timestamp: message.createdAt,
-          },
-        });
-
-        // 3. Populate sender info for the client
-        await message.populate("sender", "name avatar");
-
-        const messageData = message.toObject();
-
-        // 4. Send to receiver (via their personal room)
-        io.to(receiverId).emit("message:receive", messageData);
-
-        // 5. Ack back to sender with the saved message
-        callback?.({ success: true, message: messageData });
-      } catch (err) {
-        console.error("message:send error:", err);
-        callback?.({ error: "Failed to send message" });
-      }
-    });
-
-    // ── message:read ───────────────────────────────────────────
-    // payload: { conversationId, senderId }
-    socket.on("message:read", async (data) => {
-      try {
-        const { conversationId, senderId } = data;
-
-        await Message.updateMany(
-          { conversationId, sender: senderId, status: { $ne: "read" } },
-          { status: "read" },
-        );
-
-        // Notify the original sender their messages were read
-        io.to(senderId).emit("message:read:ack", {
-          conversationId,
-          readBy: userId,
-        });
-      } catch (err) {
-        console.error("message:read error:", err);
-      }
-    });
-
-    // ── user:typing ────────────────────────────────────────────
-    // payload: { conversationId, receiverId }
-    socket.on("user:typing", (data) => {
-      const { receiverId, conversationId } = data;
-      io.to(receiverId).emit("user:typing", {
-        conversationId,
-        userId,
-      });
-    });
-
-    socket.on("user:stop-typing", (data) => {
-      const { receiverId, conversationId } = data;
-      io.to(receiverId).emit("user:stop-typing", {
-        conversationId,
-        userId,
-      });
-    });
-
-    // ── Get online users ───────────────────────────────────────
-    socket.on("users:online", (userIds, callback) => {
-      const result = {};
-      for (const id of userIds) {
-        result[id] = onlineUsers.has(id);
-      }
-      callback?.(result);
-    });
-
-    // ── Handle disconnection ───────────────────────────────────
-    socket.on("disconnect", async () => {
-      console.log(`❌ User disconnected: ${socket.id} (userId: ${userId})`);
-
-      onlineUsers.delete(userId);
+    // Test event listener
+    socket.on("test-message", async (data) => {
+      console.log("Received test message:", data);
 
       if (getIsRedisConnected()) {
         try {
-          await redisClient.del(`online:${userId}`);
+          // Save test message in Redis
+          await redisClient.set(
+            `test:${socket.id}`,
+            JSON.stringify(data),
+            { EX: 60 }, // auto expire after 60s
+          );
+
+          const check = await redisClient.get(`test:${socket.id}`);
+          console.log("Redis Stored Value:", check);
         } catch (err) {
-          console.error("Redis presence delete error:", err);
+          console.error("Redis Operation Error:", err);
         }
       }
 
-      // Notify others this user went offline
-      socket.broadcast.emit("user:status", { userId, status: "offline" });
+      socket.emit("test-response", {
+        message: "Message received!",
+        data,
+      });
+    });
+
+    // Broadcast to all clients
+    socket.on("broadcast", async (data) => {
+      console.log("Broadcasting:", data);
+
+      if (getIsRedisConnected()) {
+        try {
+          // Store broadcast message in Redis list
+          await redisClient.rPush("broadcast:messages", JSON.stringify(data));
+
+          // Keep only last 50 broadcasts
+          await redisClient.lTrim("broadcast:messages", -50, -1);
+        } catch (err) {
+          console.error("Redis Operation Error:", err);
+        }
+      }
+
+      io.emit("broadcast-message", data);
+    });
+
+    // Handle disconnection
+    socket.on("disconnect", async () => {
+      console.log(
+        `❌ User disconnected: ${socket.id} (userId: ${socket.userId})`,
+      );
+
+      if (getIsRedisConnected()) {
+        try {
+          await redisClient.del(`test:${socket.id}`);
+        } catch (err) {
+          console.error("Redis Operation Error:", err);
+        }
+      }
     });
   });
 };
