@@ -5,10 +5,15 @@ const {
   getConversations,
   getMessages,
   createConversation,
+  searchUsers,
 } = require("../controllers/chat.controller");
 
 // All routes require authentication
 router.use(auth);
+
+// @route   GET /api/chat/users?search=keyword
+// @desc    Search users to start a new conversation
+router.get("/users", searchUsers);
 
 // @route   GET /api/chat/conversations
 // @desc    Get all conversations for the logged-in user

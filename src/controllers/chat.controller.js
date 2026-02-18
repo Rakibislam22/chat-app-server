@@ -2,6 +2,34 @@ const User = require("../models/User");
 const Conversation = require("../models/Conversation");
 const Message = require("../models/Message");
 
+// @desc    Search users by name or email (for starting a new chat)
+// @route   GET /api/chat/users?search=keyword
+exports.searchUsers = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const search = req.query.search || "";
+
+    if (!search.trim()) {
+      return res.json([]);
+    }
+
+    const users = await User.find({
+      _id: { $ne: userId }, // exclude self
+      $or: [
+        { name: { $regex: search, $options: "i" } },
+        { email: { $regex: search, $options: "i" } },
+      ],
+    })
+      .select("name email avatar")
+      .limit(20);
+
+    res.json(users);
+  } catch (err) {
+    console.error("searchUsers error:", err.message);
+    res.status(500).json({ message: "Server error" });
+  }
+};
+
 // @desc    Get all conversations for the logged-in user
 // @route   GET /api/chat/conversations
 exports.getConversations = async (req, res) => {
