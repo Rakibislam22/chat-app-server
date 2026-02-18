@@ -28,17 +28,19 @@ const socketHandler = (io) => {
   io.on("connection", async (socket) => {
     console.log(`✅ User connected: ${socket.id} (userId: ${socket.userId})`);
 
-    // --- Register userId -> socketId in Redis (or in-memory fallback) ---
+    // Store userId -> socketId mapping in Redis so we can route messages
     if (getIsRedisConnected()) {
-      await redisClient.set(`socket:${socket.userId}`, socket.id, { EX: 86400 });
-    } else {
-      // In-memory fallback map stored on the io instance
-      if (!io._userSockets) io._userSockets = {};
-      io._userSockets[socket.userId] = socket.id;
+      try {
+        await redisClient.set(`socket:${socket.userId}`, socket.id, { EX: 86400 });
+      } catch (err) {
+        console.error("Redis set socket error:", err);
+      }
     }
 
-    // --- 1-to-1 message:send ---
+    // ----------------------------------------------------------------
+    // message:send
     // Client emits: { conversationId, receiverId, text }
+    // ----------------------------------------------------------------
     socket.on("message:send", async ({ conversationId, receiverId, text }) => {
       if (!conversationId || !receiverId || !text?.trim()) return;
 
@@ -51,19 +53,19 @@ const socketHandler = (io) => {
           status: "sent",
         });
 
-        // Populate sender info for the response
-        await message.populate("sender", "name avatar");
-
-        // 2. Update conversation's lastMessage
+        // 2. Update the conversation's lastMessage snapshot
         await Conversation.findByIdAndUpdate(conversationId, {
           lastMessage: {
-            text: message.text,
+            text: text.trim(),
             sender: socket.userId,
             timestamp: message.createdAt,
           },
+          updatedAt: message.createdAt,
         });
 
-        // 3. Shape the payload both sides will receive
+        // 3. Populate sender info for the response payload
+        await message.populate("sender", "name avatar");
+
         const payload = {
           _id: message._id,
           conversationId,
@@ -75,36 +77,42 @@ const socketHandler = (io) => {
 
         // 4. Deliver to receiver if they are online
         let receiverSocketId = null;
-
         if (getIsRedisConnected()) {
-          receiverSocketId = await redisClient.get(`socket:${receiverId}`);
-        } else if (io._userSockets) {
-          receiverSocketId = io._userSockets[receiverId];
+          try {
+            receiverSocketId = await redisClient.get(`socket:${receiverId}`);
+          } catch (err) {
+            console.error("Redis get receiver socket error:", err);
+          }
         }
 
         if (receiverSocketId) {
           io.to(receiverSocketId).emit("message:receive", payload);
         }
 
-        // 5. Ack back to sender with the saved message
+        // 5. Ack back to sender with the saved message (so client gets real _id + createdAt)
         socket.emit("message:delivered", payload);
       } catch (err) {
         console.error("message:send error:", err.message);
-        socket.emit("message:error", { error: "Failed to send message" });
+        socket.emit("message:error", { message: "Failed to send message" });
       }
     });
 
-    // --- Disconnection: remove userId -> socketId mapping ---
+    // ----------------------------------------------------------------
+    // Handle disconnection — clean up Redis mapping
+    // ----------------------------------------------------------------
     socket.on("disconnect", async () => {
       console.log(`❌ User disconnected: ${socket.id} (userId: ${socket.userId})`);
 
       if (getIsRedisConnected()) {
-        await redisClient.del(`socket:${socket.userId}`);
-      } else if (io._userSockets) {
-        delete io._userSockets[socket.userId];
+        try {
+          await redisClient.del(`socket:${socket.userId}`);
+        } catch (err) {
+          console.error("Redis del socket error:", err);
+        }
       }
     });
   });
 };
 
 module.exports = socketHandler;
+
