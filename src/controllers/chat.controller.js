@@ -133,30 +133,3 @@ exports.createConversation = async (req, res) => {
     res.status(500).json({ message: "Server error" });
   }
 };
-
-// @desc    Search/list users to start a chat with (excludes self)
-// @route   GET /api/chat/users?search=
-exports.searchUsers = async (req, res) => {
-  try {
-    const userId = req.user.id;
-    const search = req.query.search || "";
-
-    const query = {
-      _id: { $ne: userId },
-    };
-
-    if (search.trim()) {
-      query.$or = [
-        { name: { $regex: search, $options: "i" } },
-        { email: { $regex: search, $options: "i" } },
-      ];
-    }
-
-    const users = await User.find(query).select("name avatar email").limit(20);
-
-    res.json(users);
-  } catch (err) {
-    console.error("searchUsers error:", err.message);
-    res.status(500).json({ message: "Server error" });
-  }
-};

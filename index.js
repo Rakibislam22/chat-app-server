@@ -6,6 +6,7 @@ const { Server } = require("socket.io");
 const connectDB = require("./src/utility/db");
 const socketHandler = require("./src/socket/handler");
 const authRoutes = require("./src/routes/auth.routes");
+const chatRoutes = require("./src/routes/chat.routes");
 const passport = require("./src/config/passport");
 const { connectRedis } = require("./src/config/redis");
 
@@ -30,6 +31,7 @@ app.use(express.json());
 
 // Routes
 app.use("/auth", authRoutes);
+app.use("/api/chat", chatRoutes);
 
 app.get("/", (req, res) => {
   res.send("Hey buddy no tension I am [ConvoX Server] Running...");
