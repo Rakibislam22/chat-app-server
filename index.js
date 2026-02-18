@@ -6,11 +6,12 @@ const { Server } = require("socket.io");
 const connectDB = require("./src/utility/db");
 const socketHandler = require("./src/utility/socket");
 const authRoutes = require("./src/routes/auth.routes");
+const passport = require("./src/config/passport");
+const { connectRedis } = require("./src/config/redis");
 
 const port = process.env.PORT || 3000;
 const app = express();
 const server = http.createServer(app);
-const passport = require("./src/config/passport");
 
 // Initialize Passport
 app.use(passport.initialize());
@@ -39,6 +40,9 @@ socketHandler(io);
 
 // Connect to database
 connectDB();
+
+// Connect redis
+connectRedis();
 
 server.listen(port, () => {
   console.log(`ConvoX Server is running on port ${port}`);
