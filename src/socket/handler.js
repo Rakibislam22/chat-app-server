@@ -18,7 +18,7 @@ const socketHandler = (io) => {
           await redisClient.set(
             `test:${socket.id}`,
             JSON.stringify(data),
-            { EX: 60 } // auto expire after 60s
+            { EX: 60 }, // auto expire after 60s
           );
 
           const check = await redisClient.get(`test:${socket.id}`);
@@ -41,10 +41,7 @@ const socketHandler = (io) => {
       if (getIsRedisConnected()) {
         try {
           // Store broadcast message in Redis list
-          await redisClient.rPush(
-            "broadcast:messages",
-            JSON.stringify(data)
-          );
+          await redisClient.rPush("broadcast:messages", JSON.stringify(data));
 
           // Keep only last 50 broadcasts
           await redisClient.lTrim("broadcast:messages", -50, -1);
