@@ -7,7 +7,7 @@ const { redisClient } = require("../config/redis");
 // @desc Register a new user
 exports.register = async (req, res) => {
   try {
-    const { name, email, password } = req.body;
+    const { name, email, password, avatar } = req.body;
 
     let user = await User.findOne({ email });
     if (user) {
@@ -20,10 +20,14 @@ exports.register = async (req, res) => {
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(password, salt);
 
+    // Generate fallback avatar if none provided
+    const finalAvatar = avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=random&color=fff&bold=true`;
+
     user = new User({
       name,
       email,
       password: hashedPassword,
+      avatar: finalAvatar,
       isVerified: false,
     });
 
