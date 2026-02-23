@@ -14,6 +14,7 @@ const createHelpers = require("./helpers");
 const registerPresenceHandlers = require("./presence");
 const registerMessageHandlers = require("./message");
 const registerConversationHandlers = require("./conversation");
+const registerTypingHandlers = require("./typing");
 
 const socketHandler = (io) => {
   const helpers = createHelpers(io);
@@ -57,6 +58,7 @@ const socketHandler = (io) => {
     // Register domain-specific event handlers
     registerMessageHandlers(socket, helpers);
     registerConversationHandlers(socket, helpers);
+    registerTypingHandlers(socket, helpers);
 
     // ----------------------------------------------------------------
     // Handle disconnection — clean up Redis mapping
