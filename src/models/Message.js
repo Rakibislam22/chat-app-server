@@ -35,6 +35,11 @@ const messageSchema = new mongoose.Schema(
       type: Date,
       default: null,
     },
+    reactions: {
+      type: Map,
+      of: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }],
+      default: {},
+    },
   },
   { timestamps: true },
 );

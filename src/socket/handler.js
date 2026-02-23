@@ -269,6 +269,60 @@ const socketHandler = (io) => {
     );
 
     // ----------------------------------------------------------------
+    // message:react
+    // Client emits: { messageId, conversationId, emoji }
+    // Toggles the user's reaction on that message and broadcasts to both sides
+    // ----------------------------------------------------------------
+    socket.on("message:react", async ({ messageId, conversationId, emoji }) => {
+      if (!messageId || !conversationId || !emoji) return;
+
+      try {
+        const message = await Message.findById(messageId);
+        if (!message || message.conversationId.toString() !== conversationId) return;
+
+        // Get existing users for this emoji, or empty array
+        const existingUsers = message.reactions?.get(emoji) || [];
+        const userIdStr = socket.userId.toString();
+        const idx = existingUsers.findIndex((id) => id.toString() === userIdStr);
+
+        if (idx > -1) {
+          // Remove user's reaction
+          existingUsers.splice(idx, 1);
+          if (existingUsers.length === 0) {
+            message.reactions.delete(emoji);
+          } else {
+            message.reactions.set(emoji, existingUsers);
+          }
+        } else {
+          // Add user's reaction
+          message.reactions.set(emoji, [...existingUsers, socket.userId]);
+        }
+
+        await message.save();
+
+        // Build a plain object from the Map for the payload
+        const reactionsObj = {};
+        if (message.reactions) {
+          for (const [key, val] of message.reactions.entries()) {
+            reactionsObj[key] = val.map((id) => id.toString());
+          }
+        }
+
+        const payload = { messageId, conversationId, reactions: reactionsObj };
+
+        // Broadcast to both participants
+        const conversation = await Conversation.findById(conversationId);
+        if (conversation) {
+          for (const pid of conversation.participants) {
+            await emitToUser(pid.toString(), "message:reacted", payload);
+          }
+        }
+      } catch (err) {
+        console.error("message:react error:", err.message);
+      }
+    });
+
+    // ----------------------------------------------------------------
     // presence:ping - client should send every ~25-30s to refresh TTL
     // ----------------------------------------------------------------
     socket.on("presence:ping", async () => {
