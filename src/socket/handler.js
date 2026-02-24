@@ -1,17 +1,23 @@
 /**
- * Socket.io event handlers and configuration
+ * Socket.io entry point
+ *
+ * Responsibilities:
+ *   1. Authenticate every incoming socket (JWT middleware)
+ *   2. Track the socket in Redis on connect / remove it on disconnect
+ *   3. Delegate event handling to focused modules
  */
 
 const jwt = require("jsonwebtoken");
 const { redisClient, getIsRedisConnected } = require("../config/redis");
-const Message = require("../models/Message");
-const Conversation = require("../models/Conversation");
 
-const PRESENCE_TTL_SECONDS = 60;
-const PRESENCE_REFRESH_MS = 25000;
-const PRESENCE_GRACE_MS = 2000;
+const createHelpers = require("./helpers");
+const registerPresenceHandlers = require("./presence");
+const registerMessageHandlers = require("./message");
+const registerConversationHandlers = require("./conversation");
 
 const socketHandler = (io) => {
+  const helpers = createHelpers(io);
+
   // --- Socket Authentication Middleware ---
   io.use((socket, next) => {
     const token = socket.handshake.auth?.token;
@@ -29,74 +35,20 @@ const socketHandler = (io) => {
     }
   });
 
-  // ----------------------------------------------------------------
-  // Helper: emit an event to ALL active sockets for a user (multi-tab/device)
-  // ----------------------------------------------------------------
-  const emitToUser = async (userId, event, data) => {
-    if (!getIsRedisConnected()) return;
-    try {
-      const socketIds = await redisClient.sMembers(`sockets:${userId}`);
-      for (const sid of socketIds) {
-        io.to(sid).emit(event, data);
-      }
-    } catch (err) {
-      console.error(`emitToUser error (${event}):`, err);
-    }
-  };
-
-  // Helper: returns true if the user has at least one active socket connection
-  const isUserOnline = async (userId) => {
-    if (!getIsRedisConnected()) return false;
-    try {
-      const count = await redisClient.sCard(`sockets:${userId}`);
-      return count > 0;
-    } catch (err) {
-      return false;
-    }
-  };
-
   io.on("connection", async (socket) => {
     console.log(`✅ User connected: ${socket.id} (userId: ${socket.userId})`);
 
-    let presenceInterval = null;
+    // Register presence handlers and start the heartbeat interval
+    const { refreshPresence, cleanup: cleanupPresence } =
+      registerPresenceHandlers(socket, io);
 
-    const refreshPresence = async (isInitialConnection = false) => {
-      if (!getIsRedisConnected()) return;
-
-      try {
-        const presenceKey = `presence:${socket.userId}`;
-        const now = Date.now().toString();
-
-        // Check if user was previously offline
-        const wasOnline = await redisClient.exists(presenceKey);
-
-        // Set or update presence
-        await redisClient.set(presenceKey, now, { EX: PRESENCE_TTL_SECONDS });
-
-        // Emit presence update if this is initial connection or user was offline
-        if (isInitialConnection || !wasOnline) {
-          io.emit("presence:update", { userId: socket.userId, online: true });
-          console.log(
-            `Presence:update emitted for user ${socket.userId} - ONLINE`,
-          );
-        }
-      } catch (err) {
-        console.error("Redis presence refresh error:", err);
-      }
-    };
-
-    // Store userId -> socketId in a Redis SET (supports multiple tabs/devices)
+    // Store userId → socketId in a Redis SET (supports multiple tabs/devices)
     if (getIsRedisConnected()) {
       try {
         const socketsKey = `sockets:${socket.userId}`;
         await redisClient.sAdd(socketsKey, socket.id);
         await redisClient.expire(socketsKey, 86400);
-        // Pass true to indicate this is initial connection
-        await refreshPresence(true);
-        presenceInterval = setInterval(
-          () => refreshPresence(false),
-          PRESENCE_REFRESH_MS,
-        );
+        await refreshPresence(true); // initial connection → broadcast online status
       } catch (err) {
         console.error("Redis set socket error:", err);
       }
@@ -294,9 +246,7 @@ const socketHandler = (io) => {
         `❌ User disconnected: ${socket.id} (userId: ${socket.userId})`,
       );
 
-      if (presenceInterval) {
-        clearInterval(presenceInterval);
-      }
+      cleanupPresence();
 
       if (getIsRedisConnected()) {
         try {
@@ -307,6 +257,7 @@ const socketHandler = (io) => {
           const remainingSockets = await redisClient.sCard(
             `sockets:${socket.userId}`,
           );
+
           if (remainingSockets === 0) {
             const disconnectTime = Date.now().toString();
             await redisClient.set(`lastSeen:${socket.userId}`, disconnectTime, {
