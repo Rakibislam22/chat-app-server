@@ -104,27 +104,31 @@ const socketHandler = (io) => {
 
     // ----------------------------------------------------------------
     // message:send
-    // Client emits: { conversationId, receiverId, text, tempId }
+    // Client emits: { conversationId, receiverId, text, gifUrl, tempId }
     // ----------------------------------------------------------------
     socket.on(
       "message:send",
-      async ({ conversationId, receiverId, text, tempId }) => {
-        if (!conversationId || !receiverId || !text?.trim()) return;
+      async ({ conversationId, receiverId, text, gifUrl, tempId }) => {
+        if (!conversationId || !receiverId) return;
+        if (!text?.trim() && !gifUrl) return; // Need at least one
 
         try {
-          // 1. Save message to MongoDB (receiverId stored for receipt queries)
-          const message = await Message.create({
+          // 1. Save message to MongoDB
+          const messageData = {
             conversationId,
             sender: socket.userId,
             receiverId,
-            text: text.trim(),
             status: "sent",
-          });
+          };
+          if (text?.trim()) messageData.text = text.trim();
+          if (gifUrl) messageData.gifUrl = gifUrl;
+
+          const message = await Message.create(messageData);
 
           // 2. Update the conversation's lastMessage snapshot
           await Conversation.findByIdAndUpdate(conversationId, {
             lastMessage: {
-              text: text.trim(),
+              text: gifUrl ? "GIF" : text.trim(),
               sender: socket.userId,
               timestamp: message.createdAt,
             },
@@ -141,6 +145,7 @@ const socketHandler = (io) => {
             sender: message.sender,
             receiverId,
             text: message.text,
+            gifUrl: message.gifUrl,
             status: message.status,
             createdAt: message.createdAt,
           };

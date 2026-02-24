@@ -19,8 +19,13 @@ const messageSchema = new mongoose.Schema(
     },
     text: {
       type: String,
-      required: true,
       trim: true,
+      default: null,
+    },
+    gifUrl: {
+      type: String,
+      trim: true,
+      default: null,
     },
     status: {
       type: String,
