@@ -108,7 +108,7 @@ const socketHandler = (io) => {
     // ----------------------------------------------------------------
     socket.on(
       "message:send",
-      async ({ conversationId, receiverId, text, tempId }) => {
+      async ({ conversationId, receiverId, text, tempId, replyTo }) => {
         if (!conversationId || !receiverId || !text?.trim()) return;
 
         try {
@@ -118,6 +118,7 @@ const socketHandler = (io) => {
             sender: socket.userId,
             receiverId,
             text: text.trim(),
+            replyTo: replyTo || null, // NEW
             status: "sent",
           });
 
@@ -131,6 +132,15 @@ const socketHandler = (io) => {
             updatedAt: message.createdAt,
           });
 
+          // --- NEW THREAD POPULATION ---
+          if (message.replyTo) {
+            await message.populate({
+              path: "replyTo",
+              select: "text sender",
+              populate: { path: "sender", select: "name avatar" },
+            });
+          }
+
           // 3. Populate sender info for the response payload
           await message.populate("sender", "name avatar");
 
@@ -141,6 +151,7 @@ const socketHandler = (io) => {
             sender: message.sender,
             receiverId,
             text: message.text,
+            replyTo: message.replyTo || null, // NEW
             status: message.status,
             createdAt: message.createdAt,
           };
