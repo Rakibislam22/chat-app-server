@@ -210,7 +210,11 @@ exports.sendMessage = async (req, res) => {
         },
       });
 
-    conversation.lastMessage = text;
+    conversation.lastMessage = {
+      text,
+      sender: userId,
+      timestamp: populatedMessage.createdAt,
+    };
     await conversation.save();
 
     res.status(201).json(populatedMessage);

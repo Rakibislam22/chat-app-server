@@ -9,6 +9,8 @@
 
 const jwt = require("jsonwebtoken");
 const { redisClient, getIsRedisConnected } = require("../config/redis");
+const Message = require("../models/Message");
+const Conversation = require("../models/Conversation");
 
 const createHelpers = require("./helpers");
 const registerPresenceHandlers = require("./presence");
