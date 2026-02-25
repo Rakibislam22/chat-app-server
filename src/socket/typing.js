@@ -5,6 +5,7 @@
  */
 
 const TYPING_AUTO_STOP_MS = 5000;
+const TYPING_THROTTLE_MS = 500;
 
 const Conversation = require("../models/Conversation");
 
@@ -13,12 +14,20 @@ const Conversation = require("../models/Conversation");
 const typingTimers = new Map();
 
 const registerTypingHandlers = (socket, { emitToUser }) => {
+  // Per-socket throttle map: conversationId → timestamp of last accepted typing:start
+  const lastTypingEmit = new Map();
   // ----------------------------------------------------------------
   // typing:start
   // Client emits: { conversationId, receiverId }
   // ----------------------------------------------------------------
   socket.on("typing:start", async ({ conversationId, receiverId } = {}) => {
     if (!conversationId || !receiverId) return;
+
+    // Rate limit: ignore bursts faster than TYPING_THROTTLE_MS per conversation
+    const now = Date.now();
+    const lastEmit = lastTypingEmit.get(conversationId) ?? 0;
+    if (now - lastEmit < TYPING_THROTTLE_MS) return;
+    lastTypingEmit.set(conversationId, now);
 
     // Security: ensure the sender is actually a participant of this conversation
     const isParticipant = await Conversation.exists({
