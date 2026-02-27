@@ -209,6 +209,28 @@ const registerMessageHandlers = (socket, { emitToUser, isUserOnline, io }) => {
       console.error("message:deleteEveryone error:", err.message);
     }
   });
+
+  // ----------------------------------------------------------------
+  // message:deleteForMe
+  // Client emits: { messageId }
+  // ----------------------------------------------------------------
+  socket.on("message:deleteForMe", async ({ messageId }) => {
+    if (!messageId) return;
+
+    try {
+      const message = await Message.findById(messageId);
+      if (!message) return;
+
+      if (!message.deletedFor.includes(socket.userId)) {
+        message.deletedFor.push(socket.userId);
+        await message.save();
+      }
+
+      socket.emit("message:deletedForMe", { messageId });
+    } catch (err) {
+      console.error("message:deleteForMe error:", err.message);
+    }
+  });
 };
 
 module.exports = registerMessageHandlers;
