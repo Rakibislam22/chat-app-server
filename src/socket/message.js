@@ -103,7 +103,8 @@ const registerMessageHandlers = (socket, { emitToUser, isUserOnline, io }) => {
 
     try {
       const message = await Message.findById(messageId);
-      if (!message || message.conversationId.toString() !== conversationId) return;
+      if (!message || message.conversationId.toString() !== conversationId)
+        return;
 
       const existingUsers = message.reactions?.get(emoji) || [];
       const userIdStr = socket.userId.toString();
@@ -135,6 +136,45 @@ const registerMessageHandlers = (socket, { emitToUser, isUserOnline, io }) => {
       io.to(`conv:${conversationId}`).emit("message:reacted", payload);
     } catch (err) {
       console.error("message:react error:", err.message);
+    }
+  });
+
+  // ----------------------------------------------------------------
+  // message:edit
+  // Client emits: { messageId, newText }
+  // ----------------------------------------------------------------
+  socket.on("message:edit", async ({ messageId, newText }) => {
+    if (!messageId || !newText?.trim()) return;
+
+    try {
+      const message = await Message.findById(messageId);
+      if (!message) return;
+
+      // Only sender can edit
+      if (message.sender.toString() !== socket.userId) return;
+
+      message.text = newText.trim();
+      message.isEdited = true;
+      message.editedAt = new Date();
+
+      await message.save();
+
+      const payload = {
+        messageId: message._id,
+        conversationId: message.conversationId,
+        newText: message.text,
+        isEdited: true,
+        editedAt: message.editedAt,
+      };
+
+      await emitToUser(socket.userId, "message:edited", payload);
+      await emitToUser(
+        message.receiverId.toString(),
+        "message:edited",
+        payload,
+      );
+    } catch (err) {
+      console.error("message:edit error:", err.message);
     }
   });
 };
