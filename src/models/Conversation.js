@@ -24,6 +24,33 @@ const conversationSchema = new mongoose.Schema(
         default: null,
       },
     },
+    // Unread message count per participant
+    unreadCount: {
+      type: Map,
+      of: Number,
+      default: {},
+    },
+    // Pinned status per participant
+    pinnedBy: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "User",
+      },
+    ],
+    // Archived status per participant
+    archivedBy: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "User",
+      },
+    ],
+    // Muted status per participant
+    mutedBy: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "User",
+      },
+    ],
   },
   { timestamps: true },
 );
