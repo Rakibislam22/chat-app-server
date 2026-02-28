@@ -31,14 +31,23 @@ const registerMessageHandlers = (socket, { emitToUser, isUserOnline, io }) => {
 
         const message = await Message.create(messageData);
 
-        await Conversation.findByIdAndUpdate(conversationId, {
-          lastMessage: {
-            text: gifUrl ? "GIF" : text.trim(),
-            sender: socket.userId,
-            timestamp: message.createdAt,
-          },
-          updatedAt: message.createdAt,
-        });
+        // Update conversation and increment unread count
+        const conversation = await Conversation.findById(conversationId);
+        conversation.lastMessage = {
+          text: gifUrl ? "GIF" : text.trim(),
+          sender: socket.userId,
+          timestamp: message.createdAt,
+        };
+        conversation.updatedAt = message.createdAt;
+
+        // Increment unread count for receiver
+        if (!conversation.unreadCount) {
+          conversation.unreadCount = new Map();
+        }
+        const currentUnread = conversation.unreadCount.get(receiverId) || 0;
+        conversation.unreadCount.set(receiverId, currentUnread + 1);
+
+        await conversation.save();
 
         if (message.replyTo) {
           await message.populate({
@@ -86,10 +95,24 @@ const registerMessageHandlers = (socket, { emitToUser, isUserOnline, io }) => {
             deliveredAt,
           });
 
+          // Emit unread count update to receiver
+          const unreadCount = conversation.unreadCount.get(receiverId) || 0;
+          await emitToUser(receiverId, "unread:update", {
+            conversationId,
+            unreadCount,
+          });
+
           await emitToUser(socket.userId, "message:status", deliveredPayload);
           await emitToUser(receiverId, "message:status", deliveredPayload);
         } else {
           await emitToUser(receiverId, "message:new", payload);
+
+          // Emit unread count update to receiver (even if offline, will receive when reconnects)
+          const unreadCount = conversation.unreadCount.get(receiverId) || 0;
+          await emitToUser(receiverId, "unread:update", {
+            conversationId,
+            unreadCount,
+          });
         }
       } catch (err) {
         console.error("message:send error:", err.message);
