@@ -159,39 +159,42 @@ const registerMessageHandlers = (socket, { emitToUser, isUserOnline, io }) => {
 
       await message.save();
 
+      // Populate sender for frontend
+      await message.populate("sender", "name avatar");
+
       const payload = {
-        messageId: message._id,
+        _id: message._id,
         conversationId: message.conversationId,
-        newText: message.text,
+        text: message.text,
         isEdited: true,
         editedAt: message.editedAt,
+        sender: message.sender,
       };
 
-      await emitToUser(socket.userId, "message:edited", payload);
-      await emitToUser(
-        message.receiverId.toString(),
-        "message:edited",
-        payload,
-      );
+      // Broadcast to entire conversation room
+      io.to(`conv:${conversationId}`).emit("message:edited", payload);
     } catch (err) {
       console.error("message:edit error:", err.message);
+      socket.emit("message:error", { message: "Failed to edit message" });
     }
   });
 
   // ----------------------------------------------------------------
-  // message:deleteEveryone
-  // Client emits: { messageId }
+  // message:delete (Delete for Everyone) - FIXED
   // ----------------------------------------------------------------
-  socket.on("message:deleteEveryone", async ({ messageId }) => {
-    if (!messageId) return;
+  socket.on("message:delete", async ({ messageId, conversationId }) => {
+    if (!messageId || !conversationId) return;
 
     try {
       const message = await Message.findById(messageId);
-      if (!message) return;
+      if (!message || message.conversationId.toString() !== conversationId)
+        return;
 
+      // Only sender can delete for everyone
       if (message.sender.toString() !== socket.userId) return;
 
       message.isDeleted = true;
+      message.text = "This message was deleted"; // optional fallback text
       await message.save();
 
       const payload = {
@@ -199,33 +202,32 @@ const registerMessageHandlers = (socket, { emitToUser, isUserOnline, io }) => {
         conversationId: message.conversationId,
       };
 
-      await emitToUser(socket.userId, "message:deleted", payload);
-      await emitToUser(
-        message.receiverId.toString(),
-        "message:deleted",
-        payload,
-      );
+      // Broadcast to entire conversation
+      io.to(`conv:${conversationId}`).emit("message:deleted", payload);
     } catch (err) {
-      console.error("message:deleteEveryone error:", err.message);
+      console.error("message:delete error:", err.message);
+      socket.emit("message:error", { message: "Failed to delete message" });
     }
   });
 
   // ----------------------------------------------------------------
-  // message:deleteForMe
-  // Client emits: { messageId }
+  // message:deleteForMe - FIXED
   // ----------------------------------------------------------------
-  socket.on("message:deleteForMe", async ({ messageId }) => {
-    if (!messageId) return;
+  socket.on("message:deleteForMe", async ({ messageId, conversationId }) => {
+    if (!messageId || !conversationId) return;
 
     try {
       const message = await Message.findById(messageId);
-      if (!message) return;
+      if (!message || message.conversationId.toString() !== conversationId)
+        return;
 
+      // Add user to deletedFor array if not already
       if (!message.deletedFor.includes(socket.userId)) {
         message.deletedFor.push(socket.userId);
         await message.save();
       }
 
+      // Only send to this user
       socket.emit("message:deletedForMe", { messageId });
     } catch (err) {
       console.error("message:deleteForMe error:", err.message);
