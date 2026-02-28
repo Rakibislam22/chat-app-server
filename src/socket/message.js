@@ -159,24 +159,25 @@ const registerMessageHandlers = (socket, { emitToUser, isUserOnline, io }) => {
 
       await message.save();
 
-      // Populate sender for frontend
+      // Populate full message for frontend 
       await message.populate("sender", "name avatar");
+      if (message.replyTo) {
+        await message.populate({
+          path: "replyTo",
+          select: "text sender",
+          populate: { path: "sender", select: "name avatar" },
+        });
+      }
 
-      const payload = {
-        _id: message._id,
-        conversationId: message.conversationId,
-        text: message.text,
-        isEdited: true,
-        editedAt: message.editedAt,
-        sender: message.sender,
-      };
+      // updated message 
+      const payload = message.toObject(); // full message object
 
       // Broadcast to entire conversation room
-      io.to(`conv:${conversationId}`).emit("message:edited", payload);
+      io.to(`conv:${message.conversationId}`).emit("message:edited", payload);
     } catch (err) {
       console.error("message:edit error:", err.message);
       socket.emit("message:error", { message: "Failed to edit message" });
-    }
+    }s
   });
 
   // ----------------------------------------------------------------
