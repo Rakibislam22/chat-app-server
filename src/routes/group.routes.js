@@ -14,6 +14,11 @@ const {
   getConversationDetails,
   updateGroupInfo,
   deleteGroup,
+  addMembers,
+  removeMembers,
+  promoteToAdmin,
+  demoteAdmin,
+  leaveGroup,
 } = require("../controllers/group.controller");
 
 // All routes require authentication
@@ -57,6 +62,69 @@ router.delete(
   isGroupConversation,
   isCreator,
   deleteGroup,
+);
+
+// @route   PATCH /api/chat/conversations/:id/members/add
+// @desc    Add new members to a group
+// @body    { userIds: [...] }
+// @access  Group admins only
+router.patch(
+  "/conversations/:id/members/add",
+  loadConversation,
+  isGroupConversation,
+  isParticipant,
+  isAdmin,
+  addMembers,
+);
+
+// @route   PATCH /api/chat/conversations/:id/members/remove
+// @desc    Remove members from a group
+// @body    { userIds: [...] }
+// @access  Group admins only (creator can remove admins; admins can only remove non-admins)
+router.patch(
+  "/conversations/:id/members/remove",
+  loadConversation,
+  isGroupConversation,
+  isParticipant,
+  isAdmin,
+  removeMembers,
+);
+
+// @route   PATCH /api/chat/conversations/:id/admins/add
+// @desc    Promote a member to admin
+// @body    { userId }
+// @access  Group admins only
+router.patch(
+  "/conversations/:id/admins/add",
+  loadConversation,
+  isGroupConversation,
+  isParticipant,
+  isAdmin,
+  promoteToAdmin,
+);
+
+// @route   PATCH /api/chat/conversations/:id/admins/remove
+// @desc    Demote an admin to regular member
+// @body    { userId }
+// @access  Group creator only
+router.patch(
+  "/conversations/:id/admins/remove",
+  loadConversation,
+  isGroupConversation,
+  isParticipant,
+  isCreator,
+  demoteAdmin,
+);
+
+// @route   POST /api/chat/conversations/:id/leave
+// @desc    Leave a group (transfers ownership if creator)
+// @access  Group participants only
+router.post(
+  "/conversations/:id/leave",
+  loadConversation,
+  isGroupConversation,
+  isParticipant,
+  leaveGroup,
 );
 
 module.exports = router;
