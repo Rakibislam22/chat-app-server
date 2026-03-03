@@ -39,6 +39,7 @@ app.use(express.json());
 // Routes
 app.use("/auth", authRoutes);
 app.use("/api/chat", chatRoutes);
+app.use("/api/reset", require("./src/routes/reset.routes"));
 
 // Health check for Deployment (UptimeRobot/Heartbeat)
 const { getIsRedisConnected } = require("./src/config/redis");
