@@ -9,7 +9,6 @@ const authRoutes = require("./src/routes/auth.routes");
 const chatRoutes = require("./src/routes/chat.routes");
 const passport = require("./src/config/passport");
 const { connectRedis } = require("./src/config/redis");
-const resetRoutes = require("./src/routes/reset.routes");
 
 const port = process.env.PORT || 3000;
 const app = express();
@@ -29,33 +28,35 @@ const io = new Server(server, {
 
 // Middleware
 app.set("trust proxy", 1); // Required for Render/Koyeb/Vercel
-app.use(cors({
-  origin: [process.env.SITE_URL, "http://localhost:3000"],
-  credentials: true,
-}));
+app.use(
+  cors({
+    origin: [process.env.SITE_URL, "http://localhost:3000"],
+    credentials: true,
+  }),
+);
 app.use(express.json());
 
 // Routes
 app.use("/auth", authRoutes);
 app.use("/api/chat", chatRoutes);
-app.use("/api", resetRoutes);
 
 // Health check for Deployment (UptimeRobot/Heartbeat)
 const { getIsRedisConnected } = require("./src/config/redis");
 const mongoose = require("mongoose");
 
 app.get("/health", (req, res) => {
-  const dbStatus = mongoose.connection.readyState === 1 ? "Connected" : "Disconnected";
+  const dbStatus =
+    mongoose.connection.readyState === 1 ? "Connected" : "Disconnected";
   const redisStatus = getIsRedisConnected() ? "Connected" : "Disconnected";
 
-  const status = (dbStatus === "Connected") ? 200 : 500;
+  const status = dbStatus === "Connected" ? 200 : 500;
 
   res.status(status).json({
     status: "ok",
     database: dbStatus,
     redis: redisStatus,
     uptime: process.uptime(),
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
   });
 });
 

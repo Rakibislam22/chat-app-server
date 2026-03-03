@@ -3,6 +3,9 @@ const router = express.Router();
 const { register, login, me, oauthCallback, verifyOTP, resendOTP } = require("../controllers/auth.controller");
 const auth = require("../middleware/auth.middleware");
 const passport = require("passport");
+// sendResetEmail
+const { sendResetEmail } = require("../controllers/reset.controller");
+router.post("/send-reset-email", sendResetEmail);
 
 // @route   POST /auth/register
 router.post("/register", register);
