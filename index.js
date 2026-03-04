@@ -47,7 +47,7 @@ app.use(express.json());
 app.use("/auth", authRoutes);
 app.use("/api/chat", chatRoutes);
 app.use("/api/chat", groupRoutes);
-app.use("/api", resetRoutes);
+app.use("/api/reset", require("./src/routes/reset.routes"));
 
 // Scheduled Message Routes
 app.use("/api/messages", scheduleRoutes);
