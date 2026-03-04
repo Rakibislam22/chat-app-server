@@ -8,6 +8,7 @@ const socketHandler = require("./src/socket/handler");
 const authRoutes = require("./src/routes/auth.routes");
 const chatRoutes = require("./src/routes/chat.routes");
 const groupRoutes = require("./src/routes/group.routes");
+const resetRoutes = require("./src/routes/reset.routes");
 const passport = require("./src/config/passport");
 const { connectRedis, getIsRedisConnected } = require("./src/config/redis");
 const scheduleRoutes = require("./src/routes/schedule.routes");
@@ -46,6 +47,7 @@ app.use(express.json());
 app.use("/auth", authRoutes);
 app.use("/api/chat", chatRoutes);
 app.use("/api/chat", groupRoutes);
+app.use("/api/reset", resetRoutes);
 app.use("/api/reset", require("./src/routes/reset.routes"));
 
 // Scheduled Message Routes

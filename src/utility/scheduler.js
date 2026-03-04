@@ -10,7 +10,8 @@ const createHelpers = require("../socket/helpers");
 async function acquireLock(jobId, ttlMs = 15000) {
   const lockKey = `lock:sched:${jobId}`;
   const ok = await redisClient.set(lockKey, "1", { NX: true, PX: ttlMs });
-  return ok === "OK";
+  // ✅ node-redis returns "OK" or null; in v5 treat any truthy as acquired
+  return !!ok;
 }
 async function releaseLock(jobId) {
   const lockKey = `lock:sched:${jobId}`;
@@ -28,7 +29,6 @@ function buildMessagePayload(message) {
     status: message.status,
     createdAt: message.createdAt,
     scheduledFromId: message.scheduledFromId,
-    // include optional fields if your schema uses them (harmless if undefined)
     gifUrl: message.gifUrl,
     replyTo: message.replyTo || null,
     deliveredAt: message.deliveredAt,
@@ -106,16 +106,24 @@ function startScheduler(io) {
             scheduledFromId: scheduled._id,
           });
 
+          // ✅ (4) Update conversation.lastMessage so conversation list stays fresh
+          await Conversation.findByIdAndUpdate(scheduled.conversationId, {
+            lastMessage: {
+              text: message.text,
+              sender: message.sender,
+              timestamp: message.createdAt,
+            },
+            updatedAt: message.createdAt,
+          });
+
           const payload = buildMessagePayload(message);
 
           // Emit to users using your Redis socket mapping
           if (isGroup) {
-            // Send to all participants (including sender so their UI updates)
             for (const uid of participants) {
               await emitToUser(uid, "message:new", payload);
             }
           } else {
-            // DM: send to sender + receiver
             await emitToUser(
               scheduled.senderId.toString(),
               "message:new",
@@ -140,7 +148,10 @@ function startScheduler(io) {
               $set: { status: "failed", lastError: err.message },
             });
             await redisClient.zRem("sched:messages", jobId);
-          } catch (_) {}
+          } catch (innerErr) {
+            // ✅ (5) Don't swallow errors silently
+            console.error("Failed to mark scheduled job as failed:", innerErr);
+          }
         } finally {
           await releaseLock(jobId);
         }

@@ -1,22 +1,15 @@
+// src/controllers/schedule.controller.js
+
 const ScheduledMessage = require("../models/ScheduledMessage");
-const RedisConfig = require("../config/redis");
+const { redisClient, getIsRedisConnected } = require("../config/redis");
 const { v4: uuidv4 } = require("uuid");
 
-// ✅ Support both export styles:
-// - redisClient is the actual connected client
-// - OR redisClient() returns the client (getter style)
-function getRedisClient() {
-  const rc = RedisConfig.redisClient;
-  if (!rc) return null;
-  return typeof rc === "function" ? rc() : rc;
-}
-
-// ✅ Your auth.middleware sets req.user = decoded; decoded.id
+// Your auth middleware sets req.user = decoded; decoded.id
 function getAuthUserId(req) {
   return req?.user?.id || req?.user?._id || req?.user?.userId;
 }
 
-function ensureObjectIdString(x) {
+function ensureString(x) {
   return x ? x.toString() : "";
 }
 
@@ -42,6 +35,11 @@ exports.createScheduledMessage = async (req, res) => {
       return res.status(400).json({ error: "Invalid sendAt date" });
     }
 
+    //  sendAt must be in the future
+    if (sendTime.getTime() <= Date.now()) {
+      return res.status(400).json({ error: "sendAt must be in the future" });
+    }
+
     const key = idempotencyKey || uuidv4();
 
     // Idempotency: if same key already exists, return it
@@ -56,17 +54,15 @@ exports.createScheduledMessage = async (req, res) => {
       idempotencyKey: key,
     });
 
-    const client = getRedisClient();
-    if (!client) {
-      // still return created scheduled message even if redis is down
-      // (scheduler won't run until redis is up)
+    // Consistent redis usage (same as scheduler)
+    if (!getIsRedisConnected()) {
       return res.status(201).json({
         ...scheduled.toObject(),
         warning: "Redis not connected; scheduling queue not updated",
       });
     }
 
-    await client.zAdd("sched:messages", {
+    await redisClient.zAdd("sched:messages", {
       score: sendTime.getTime(),
       value: scheduled._id.toString(),
     });
@@ -116,10 +112,7 @@ exports.getScheduledMessage = async (req, res) => {
 
     if (!scheduled) return res.status(404).json({ error: "Not found" });
 
-    // ✅ FIX: use userId (not req.user._id)
-    if (
-      ensureObjectIdString(scheduled.senderId) !== ensureObjectIdString(userId)
-    ) {
+    if (ensureString(scheduled.senderId) !== ensureString(userId)) {
       return res.status(403).json({ error: "Forbidden" });
     }
 
@@ -144,10 +137,7 @@ exports.editScheduledMessage = async (req, res) => {
     const scheduled = await ScheduledMessage.findById(id);
     if (!scheduled) return res.status(404).json({ error: "Not found" });
 
-    // ✅ FIX: use userId (not req.user._id)
-    if (
-      ensureObjectIdString(scheduled.senderId) !== ensureObjectIdString(userId)
-    ) {
+    if (ensureString(scheduled.senderId) !== ensureString(userId)) {
       return res.status(403).json({ error: "Forbidden" });
     }
 
@@ -159,18 +149,21 @@ exports.editScheduledMessage = async (req, res) => {
       scheduled.content = content.trim();
     }
 
-    const client = getRedisClient();
-
     if (sendAt) {
       const sendTime = new Date(sendAt);
       if (isNaN(sendTime.getTime())) {
         return res.status(400).json({ error: "Invalid sendAt date" });
       }
 
+      //  also enforce future time on edit
+      if (sendTime.getTime() <= Date.now()) {
+        return res.status(400).json({ error: "sendAt must be in the future" });
+      }
+
       scheduled.sendAt = sendTime;
 
-      if (client) {
-        await client.zAdd("sched:messages", {
+      if (getIsRedisConnected()) {
+        await redisClient.zAdd("sched:messages", {
           score: sendTime.getTime(),
           value: scheduled._id.toString(),
         });
@@ -197,10 +190,7 @@ exports.cancelScheduledMessage = async (req, res) => {
     const scheduled = await ScheduledMessage.findById(id);
     if (!scheduled) return res.status(404).json({ error: "Not found" });
 
-    // ✅ FIX: use userId (not req.user._id)
-    if (
-      ensureObjectIdString(scheduled.senderId) !== ensureObjectIdString(userId)
-    ) {
+    if (ensureString(scheduled.senderId) !== ensureString(userId)) {
       return res.status(403).json({ error: "Forbidden" });
     }
 
@@ -213,9 +203,8 @@ exports.cancelScheduledMessage = async (req, res) => {
     scheduled.status = "cancelled";
     await scheduled.save();
 
-    const client = getRedisClient();
-    if (client) {
-      await client.zRem("sched:messages", scheduled._id.toString());
+    if (getIsRedisConnected()) {
+      await redisClient.zRem("sched:messages", scheduled._id.toString());
     }
 
     return res.json({ success: true });
