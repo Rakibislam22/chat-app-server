@@ -51,24 +51,23 @@ const socketHandler = (io) => {
       }
     }
 
-    // Auto-join all group conversation rooms for this user so they receive
-    // group broadcasts without needing to manually open each conversation.
+    // Auto-join all conversation rooms for this user so they receive
+    // broadcasts (like reactions) without needing to manually open each conversation.
     try {
-      const groupConvs = await Conversation.find({
+      const allConvs = await Conversation.find({
         participants: socket.userId,
-        type: "group",
-      }).select("_id");
+      }).select("_id type");
 
-      for (const conv of groupConvs) {
+      for (const conv of allConvs) {
         socket.join(`conv:${conv._id}`);
       }
-      if (groupConvs.length > 0) {
+      if (allConvs.length > 0) {
         console.log(
-          `🏠 User ${socket.userId} auto-joined ${groupConvs.length} group room(s)`,
+          `🏠 User ${socket.userId} auto-joined ${allConvs.length} room(s)`,
         );
       }
     } catch (err) {
-      console.error("Group room auto-join error:", err.message);
+      console.error("Conversation room auto-join error:", err.message);
     }
 
     // Delegate event handling to focused modules
