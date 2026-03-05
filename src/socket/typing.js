@@ -48,12 +48,21 @@ const registerTypingHandlers = (socket, { emitToUser, io }) => {
       isTyping: true,
     };
 
+    let targetReceiverId = receiverId;
+    if (!isGroup && !targetReceiverId) {
+      // Find the other participant if not provided by client
+      const conv = await Conversation.findById(conversationId).select("participants");
+      if (conv) {
+        targetReceiverId = conv.participants.find(p => p.toString() !== socket.userId.toString());
+      }
+    }
+
     if (isGroup) {
       // Broadcast to all other members in the room (socket.to excludes the sender)
       socket.to(`conv:${conversationId}`).emit("typing:update", typingPayload);
     } else {
-      if (!receiverId) return;
-      await emitToUser(receiverId, "typing:update", typingPayload);
+      if (!targetReceiverId) return;
+      await emitToUser(targetReceiverId, "typing:update", typingPayload);
     }
 
     // Reset auto-stop timer so continuous keystrokes keep extending it
@@ -71,14 +80,14 @@ const registerTypingHandlers = (socket, { emitToUser, io }) => {
       if (isGroup) {
         socket.to(`conv:${conversationId}`).emit("typing:update", stopPayload);
       } else {
-        await emitToUser(receiverId, "typing:update", stopPayload);
+        await emitToUser(targetReceiverId, "typing:update", stopPayload);
       }
     }, TYPING_AUTO_STOP_MS);
 
     // Store timer + metadata for cleanup
     typingTimers.set(key, {
       timer,
-      receiverId: isGroup ? null : receiverId,
+      receiverId: isGroup ? null : targetReceiverId,
       isGroup,
     });
   });
@@ -105,14 +114,22 @@ const registerTypingHandlers = (socket, { emitToUser, io }) => {
       isTyping: false,
     };
 
-    // Use stored isGroup flag if available, otherwise fall back to receiverId check
+    // Use stored info if available, otherwise find/use provided
     const isGroup = timerData ? timerData.isGroup : !receiverId;
+    let targetReceiverId = timerData ? timerData.receiverId : receiverId;
 
     if (isGroup) {
       socket.to(`conv:${conversationId}`).emit("typing:update", stopPayload);
     } else {
-      if (receiverId)
-        await emitToUser(receiverId, "typing:update", stopPayload);
+      if (!targetReceiverId) {
+        // Fallback search
+        const conv = await Conversation.findById(conversationId).select("participants");
+        if (conv) {
+          targetReceiverId = conv.participants.find(p => p.toString() !== socket.userId.toString());
+        }
+      }
+      if (targetReceiverId)
+        await emitToUser(targetReceiverId, "typing:update", stopPayload);
     }
   });
 

@@ -223,11 +223,21 @@ const registerMessageHandlers = (socket, { emitToUser, isUserOnline, io }) => {
       if (!message || message.conversationId.toString() !== conversationId)
         return;
 
-      const existingUsers = message.reactions?.get(emoji) || [];
+      // Ensure reactions Map exists
+      if (!message.reactions) {
+        message.reactions = new Map();
+      }
+
       const userIdStr = socket.userId.toString();
-      const idx = existingUsers.findIndex((id) => id.toString() === userIdStr);
+      let existingUsers = message.reactions.get(emoji) || [];
+
+      // Ensure existingUsers is an array and doesn't contain the userId as an object vs string mismatch
+      existingUsers = existingUsers.map(id => id.toString());
+
+      const idx = existingUsers.indexOf(userIdStr);
 
       if (idx > -1) {
+        // Toggle off
         existingUsers.splice(idx, 1);
         if (existingUsers.length === 0) {
           message.reactions.delete(emoji);
@@ -235,6 +245,7 @@ const registerMessageHandlers = (socket, { emitToUser, isUserOnline, io }) => {
           message.reactions.set(emoji, existingUsers);
         }
       } else {
+        // Toggle on
         message.reactions.set(emoji, [...existingUsers, socket.userId]);
       }
 
@@ -249,7 +260,7 @@ const registerMessageHandlers = (socket, { emitToUser, isUserOnline, io }) => {
 
       const payload = { messageId, conversationId, reactions: reactionsObj };
 
-      // Broadcast to everyone in the conversation room (including the reactor)
+      // Broadcast to everyone in the conversation room
       io.to(`conv:${conversationId}`).emit("message:reacted", payload);
     } catch (err) {
       console.error("message:react error:", err.message);
@@ -287,7 +298,7 @@ const registerMessageHandlers = (socket, { emitToUser, isUserOnline, io }) => {
       }
 
       // updated message
-      const payload = message.toObject(); 
+      const payload = message.toObject();
 
       // Broadcast to entire conversation room
       io.to(`conv:${message.conversationId}`).emit("message:edited", payload);
