@@ -94,6 +94,11 @@ const messageSchema = new mongoose.Schema(
         ref: "User",
       },
     ],
+    reactions: {
+      type: Map,
+      of: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }],
+      default: {},
+    },
   },
   { timestamps: true },
 );
