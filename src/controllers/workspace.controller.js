@@ -118,3 +118,27 @@ exports.listMyWorkspaces = async (req, res) => {
     res.status(500).json({ message: "Server error" });
   }
 };
+
+// ---------------------------------------------------------------------------
+// GET /api/workspaces/:workspaceId
+// Get full workspace details including populated members and categories.
+// req.workspace and req.memberRecord are attached by middleware.
+// ---------------------------------------------------------------------------
+exports.getWorkspace = async (req, res) => {
+  try {
+    const workspace = req.workspace; // attached by loadWorkspace
+
+    await workspace.populate([
+      { path: "members.user", select: "name avatar email" },
+      { path: "createdBy", select: "name avatar" },
+    ]);
+
+    res.json({
+      ...workspace.toObject(),
+      myRole: req.memberRecord.role,
+    });
+  } catch (err) {
+    console.error("getWorkspace error:", err.message);
+    res.status(500).json({ message: "Server error" });
+  }
+};
