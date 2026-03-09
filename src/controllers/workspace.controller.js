@@ -142,3 +142,113 @@ exports.getWorkspace = async (req, res) => {
     res.status(500).json({ message: "Server error" });
   }
 };
+
+// ---------------------------------------------------------------------------
+// PATCH /api/workspaces/:workspaceId
+// Update workspace name, description, avatar, and/or visibility (admin+).
+// Body: { name?, description?, avatar?, visibility? }
+// ---------------------------------------------------------------------------
+exports.updateWorkspace = async (req, res) => {
+  try {
+    const { name, description, avatar, visibility } = req.body;
+    const workspace = req.workspace; // attached by loadWorkspace
+
+    // ── Require at least one field ───────────────────────────────
+    if (
+      name === undefined &&
+      description === undefined &&
+      avatar === undefined &&
+      visibility === undefined
+    ) {
+      return res
+        .status(400)
+        .json({ message: "Provide at least one field to update" });
+    }
+
+    // ── Apply only the fields that are present ───────────────────
+    if (name !== undefined) {
+      if (!name.trim()) {
+        return res
+          .status(400)
+          .json({ message: "Workspace name cannot be empty" });
+      }
+      if (name.trim().length > 100) {
+        return res
+          .status(400)
+          .json({ message: "Workspace name must be 100 characters or fewer" });
+      }
+      workspace.name = name.trim();
+    }
+
+    if (description !== undefined) {
+      workspace.description = description?.trim() || null;
+    }
+
+    if (avatar !== undefined) {
+      workspace.avatar = avatar || null;
+    }
+
+    if (visibility !== undefined) {
+      if (visibility !== "public" && visibility !== "private") {
+        return res
+          .status(400)
+          .json({ message: "visibility must be \"public\" or \"private\"" });
+      }
+      workspace.visibility = visibility;
+    }
+
+    await workspace.save();
+
+    const io = req.app.get("io");
+    if (io) {
+      io.to(`workspace:${workspace._id}`).emit("workspace:updated", {
+        workspaceId: workspace._id,
+        name: workspace.name,
+        description: workspace.description,
+        avatar: workspace.avatar,
+        visibility: workspace.visibility,
+      });
+    }
+
+    res.json({
+      message: "Workspace updated",
+      name: workspace.name,
+      description: workspace.description,
+      avatar: workspace.avatar,
+      visibility: workspace.visibility,
+    });
+  } catch (err) {
+    console.error("updateWorkspace error:", err.message);
+    res.status(500).json({ message: "Server error" });
+  }
+};
+
+// ---------------------------------------------------------------------------
+// DELETE /api/workspaces/:workspaceId
+// Permanently delete the workspace (owner only).
+// Emits workspace:deleted BEFORE deletion so connected clients can react.
+// ---------------------------------------------------------------------------
+exports.deleteWorkspace = async (req, res) => {
+  try {
+    const workspace = req.workspace; // attached by loadWorkspace
+    const workspaceId = workspace._id;
+
+    // Notify connected clients before the document is gone
+    const io = req.app.get("io");
+    if (io) {
+      io.to(`workspace:${workspaceId}`).emit("workspace:deleted", {
+        workspaceId,
+        deletedBy: req.user.id,
+      });
+    }
+
+    // TODO: delete workspace modules and messages (Member 2's domain)
+
+    await workspace.deleteOne();
+
+    res.json({ message: "Workspace deleted" });
+  } catch (err) {
+    console.error("deleteWorkspace error:", err.message);
+    res.status(500).json({ message: "Server error" });
+  }
+};
