@@ -13,6 +13,7 @@ const passport = require("./src/config/passport");
 const { connectRedis, getIsRedisConnected } = require("./src/config/redis");
 const scheduleRoutes = require("./src/routes/schedule.routes");
 const workspaceRoutes = require("./src/routes/workspace.routes");
+const moduleRoutes = require("./src/routes/module.routes");
 const mongoose = require("mongoose");
 
 const port = process.env.PORT || 3000;
@@ -53,6 +54,7 @@ app.use("/api/reset", require("./src/routes/reset.routes"));
 
 // Workspace Routes
 app.use("/api/workspaces", workspaceRoutes);
+app.use("/api/workspaces/:workspaceId/modules", moduleRoutes);
 
 // Scheduled Message Routes
 app.use("/api/messages", scheduleRoutes);
