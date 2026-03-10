@@ -247,6 +247,99 @@ const registerModuleHandlers = (socket, { emitToUser, io }) => {
         }
     });
 
+    // ================================================================
+    // module:message:edit
+    // ================================================================
+
+    socket.on("module:message:edit", async ({ msgId, moduleId, newText }) => {
+        if (!msgId || !moduleId || !newText?.trim()) return;
+
+        try {
+            const message = await ModuleMessage.findOne({ _id: msgId, moduleId });
+            if (!message) return;
+            if (message.sender.toString() !== socket.userId) return; // sender only
+            if (message.isDeleted) return;
+
+            message.text = newText.trim();
+            message.isEdited = true;
+            message.editedAt = new Date();
+            await message.save();
+
+            await message.populate("sender", "name avatar");
+
+            io.to(`module:${moduleId}`).emit("module:message:edited", {
+                _id: message._id,
+                moduleId,
+                text: message.text,
+                editedAt: message.editedAt,
+                isEdited: true,
+                sender: message.sender,
+            });
+        } catch (err) {
+            console.error("module:message:edit error:", err.message);
+            socket.emit("message:error", { message: "Failed to edit message" });
+        }
+    });
+
+    // ================================================================
+    // module:message:delete (delete for everyone)
+    // ================================================================
+
+    socket.on("module:message:delete", async ({ msgId, moduleId }) => {
+        if (!msgId || !moduleId) return;
+        try {
+            const message = await ModuleMessage.findOne({ _id: msgId, moduleId });
+            if (!message) return;
+
+            // Only sender OR workspace admin/owner can delete for everyone
+            if (message.sender.toString() !== socket.userId) {
+                // Check if admin/owner
+                const workspace = await Workspace.findOne({
+                    _id: message.workspaceId,
+                    "members.user": socket.userId,
+                }).select("members");
+                const memberRecord = workspace?.members.find(
+                    (m) => m.user.toString() === socket.userId
+                );
+                const isAdmin =
+                    memberRecord?.role === "owner" || memberRecord?.role === "admin";
+                if (!isAdmin) return;
+            }
+
+            message.isDeleted = true;
+            message.text = null;
+            message.gifUrl = null;
+            await message.save();
+
+            io.to(`module:${moduleId}`).emit("module:message:deleted", {
+                msgId: message._id,
+                moduleId,
+                deletedForEveryone: true,
+            });
+        } catch (err) {
+            console.error("module:message:delete error:", err.message);
+        }
+    });
+
+    // ================================================================
+    // module:message:deleteForMe
+    // ================================================================
+
+    socket.on("module:message:deleteForMe", async ({ msgId, moduleId }) => {
+        if (!msgId || !moduleId) return;
+        try {
+            await ModuleMessage.findOneAndUpdate(
+                { _id: msgId, moduleId },
+                { $addToSet: { deletedFor: socket.userId } }
+            );
+            // Only notify this socket — it's a private action
+            socket.emit("module:message:deletedForMe", { msgId, moduleId });
+        } catch (err) {
+            console.error("module:message:deleteForMe error:", err.message);
+        }
+    });
+
+
     // Cleanup function for disconnect
     const cleanup = () => {
         // Clear all module typing timers this socket set
