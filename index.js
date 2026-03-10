@@ -12,6 +12,7 @@ const resetRoutes = require("./src/routes/reset.routes");
 const passport = require("./src/config/passport");
 const { connectRedis, getIsRedisConnected } = require("./src/config/redis");
 const scheduleRoutes = require("./src/routes/schedule.routes");
+const workspaceRoutes = require("./src/routes/workspace.routes");
 const mongoose = require("mongoose");
 
 const port = process.env.PORT || 3000;
@@ -49,6 +50,9 @@ app.use("/api/chat", chatRoutes);
 app.use("/api/chat", groupRoutes);
 app.use("/api/reset", resetRoutes);
 app.use("/api/reset", require("./src/routes/reset.routes"));
+
+// Workspace Routes
+app.use("/api/workspaces", workspaceRoutes);
 
 // Scheduled Message Routes
 app.use("/api/messages", scheduleRoutes);
