@@ -199,7 +199,54 @@ const registerModuleHandlers = (socket, { emitToUser, io }) => {
         }
     );
 
-    
+    // ================================================================
+    // module:message:react
+    // ================================================================
+
+    socket.on("module:message:react", async ({ msgId, moduleId, emoji }) => {
+        if (!msgId || !moduleId || !emoji) return;
+
+        try {
+            const message = await ModuleMessage.findOne({ _id: msgId, moduleId });
+            if (!message || message.isDeleted) return;
+
+            if (!message.reactions) message.reactions = new Map();
+
+            const userIdStr = socket.userId.toString();
+            let existingUsers = (message.reactions.get(emoji) || []).map((id) =>
+                id.toString()
+            );
+            const idx = existingUsers.indexOf(userIdStr);
+
+            if (idx > -1) {
+                existingUsers.splice(idx, 1);
+                if (existingUsers.length === 0) {
+                    message.reactions.delete(emoji);
+                } else {
+                    message.reactions.set(emoji, existingUsers);
+                }
+            } else {
+                message.reactions.set(emoji, [...existingUsers, socket.userId]);
+            }
+
+            await message.save();
+
+            // Convert Map to plain object for transport
+            const reactionsObj = {};
+            for (const [key, val] of message.reactions.entries()) {
+                reactionsObj[key] = val.map((id) => id.toString());
+            }
+
+            io.to(`module:${moduleId}`).emit("module:message:reacted", {
+                msgId,
+                moduleId,
+                reactions: reactionsObj,
+            });
+        } catch (err) {
+            console.error("module:message:react error:", err.message);
+        }
+    });
+
     // Cleanup function for disconnect
     const cleanup = () => {
         // Clear all module typing timers this socket set
