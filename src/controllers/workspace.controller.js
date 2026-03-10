@@ -482,3 +482,84 @@ exports.updateMemberRole = async (req, res) => {
     res.status(500).json({ message: "Server error" });
   }
 };
+
+// ---------------------------------------------------------------------------
+// POST /api/workspaces/:workspaceId/leave
+// Authenticated user voluntarily leaves the workspace.
+// Special cases:
+//   - Last member leaving: workspace is deleted entirely.
+//   - Owner leaving with others remaining: ownership transfers to another
+//     admin if one exists, otherwise to the longest-standing member.
+// ---------------------------------------------------------------------------
+exports.leaveWorkspace = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const workspace = req.workspace;
+    const wsId = workspace._id;
+    const roomId = `workspace:${wsId}`;
+    const io = req.app.get("io");
+
+    const remainingMembers = workspace.members.filter(
+      (m) => m.user.toString() !== userId,
+    );
+
+    // ── Last member — delete the workspace entirely ──────────────
+    if (remainingMembers.length === 0) {
+      if (io) {
+        io.to(roomId).emit("workspace:deleted", {
+          workspaceId: wsId,
+          reason: "last_member_left",
+        });
+      }
+      // TODO: delete workspace modules and messages (Member 2's domain)
+      await workspace.deleteOne();
+      return res.json({
+        message: "You were the last member; workspace has been deleted",
+      });
+    }
+
+    const ownerRecord = workspace.members.find((m) => m.role === "owner");
+    const isOwnerLeaving = ownerRecord?.user.toString() === userId;
+
+    if (isOwnerLeaving) {
+      // ── Owner leaving — transfer ownership ──────────────────────
+      const nextAdmin = remainingMembers.find((m) => m.role === "admin");
+      const newOwnerRecord = nextAdmin || remainingMembers[0];
+      const newOwnerId = newOwnerRecord.user.toString();
+
+      await Workspace.findByIdAndUpdate(
+        wsId,
+        {
+          $pull: { members: { user: userId } },
+          $set: { "members.$[elem].role": "owner" },
+        },
+        { arrayFilters: [{ "elem.user": newOwnerId }] },
+      );
+
+      if (io) {
+        io.to(roomId).emit("workspace:owner-transferred", {
+          workspaceId: wsId,
+          newOwnerId,
+          by: userId,
+        });
+      }
+    } else {
+      // ── Regular member or admin leaving ─────────────────────────
+      await Workspace.findByIdAndUpdate(wsId, {
+        $pull: { members: { user: userId } },
+      });
+    }
+
+    if (io) {
+      io.to(roomId).emit("workspace:member-left", {
+        workspaceId: wsId,
+        userId,
+      });
+    }
+
+    res.json({ message: "You have left the workspace" });
+  } catch (err) {
+    console.error("leaveWorkspace error:", err.message);
+    res.status(500).json({ message: "Server error" });
+  }
+};
