@@ -751,3 +751,92 @@ exports.addCategory = async (req, res) => {
     res.status(500).json({ message: "Server error" });
   }
 };
+
+// ---------------------------------------------------------------------------
+// PATCH /api/workspaces/:workspaceId/categories/:categoryId
+// Update a category's name or position (admin+).
+// Body: { name?, position? }
+// ---------------------------------------------------------------------------
+exports.updateCategory = async (req, res) => {
+  try {
+    const { categoryId } = req.params;
+    const { name, position } = req.body;
+
+    if (name === undefined && position === undefined) {
+      return res.status(400).json({ message: "Nothing to update" });
+    }
+
+    // Verify the category exists on this workspace
+    const category = req.workspace.categories.id(categoryId);
+    if (!category) {
+      return res.status(404).json({ message: "Category not found" });
+    }
+
+    const updateFields = {};
+    if (name !== undefined) {
+      if (!name.trim()) {
+        return res
+          .status(400)
+          .json({ message: "Category name cannot be blank" });
+      }
+      updateFields["categories.$[cat].name"] = name.trim();
+    }
+    if (position !== undefined) {
+      updateFields["categories.$[cat].position"] = position;
+    }
+
+    const updated = await Workspace.findByIdAndUpdate(
+      req.workspace._id,
+      { $set: updateFields },
+      {
+        new: true,
+        arrayFilters: [{ "cat._id": category._id }],
+        runValidators: true,
+      },
+    );
+
+    const updatedCategory = updated.categories.id(categoryId);
+
+    const io = req.app.get("io");
+    io.to(`workspace:${updated._id}`).emit("workspace:category-updated", {
+      workspaceId: updated._id,
+      category: updatedCategory,
+    });
+
+    res.json(updatedCategory);
+  } catch (err) {
+    console.error("updateCategory error:", err.message);
+    res.status(500).json({ message: "Server error" });
+  }
+};
+
+// ---------------------------------------------------------------------------
+// DELETE /api/workspaces/:workspaceId/categories/:categoryId
+// Remove a category from the workspace (admin+).
+// ---------------------------------------------------------------------------
+exports.deleteCategory = async (req, res) => {
+  try {
+    const { categoryId } = req.params;
+
+    // Verify the category exists on this workspace
+    const category = req.workspace.categories.id(categoryId);
+    if (!category) {
+      return res.status(404).json({ message: "Category not found" });
+    }
+
+    await Workspace.findByIdAndUpdate(req.workspace._id, {
+      $pull: { categories: { _id: category._id } },
+    });
+
+    const io = req.app.get("io");
+    io.to(`workspace:${req.workspace._id}`).emit("workspace:category-deleted", {
+      workspaceId: req.workspace._id,
+      categoryId,
+    });
+
+    res.json({ message: "Category deleted" });
+  } catch (err) {
+    console.error("deleteCategory error:", err.message);
+    res.status(500).json({ message: "Server error" });
+  }
+};
