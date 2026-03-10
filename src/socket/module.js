@@ -73,8 +73,133 @@ const registerModuleHandlers = (socket, { emitToUser, io }) => {
         if (moduleId) socket.leave(`module:${moduleId}`);
     });
 
+    // ================================================================
+    // module:message:send
+    // ================================================================
 
+    socket.on(
+        "module:message:send",
+        async ({ moduleId, workspaceId, text, gifUrl, tempId, replyTo }) => {
+            if (!moduleId || (!text?.trim() && !gifUrl)) return;
 
+            try {
+                // Verify module + membership
+                const mod = await Module.findOne({ _id: moduleId, workspaceId }).select(
+                    "workspaceId type isPrivate allowedMembers"
+                );
+                if (!mod)
+                    return socket.emit("message:error", { message: "Module not found" });
+
+                const workspace = await Workspace.findOne({
+                    _id: workspaceId,
+                    "members.user": socket.userId,
+                }).select("members");
+                if (!workspace)
+                    return socket.emit("message:error", { message: "Access denied" });
+
+                const memberRecord = workspace.members.find(
+                    (m) => m.user.toString() === socket.userId
+                );
+                if (!memberRecord) return;
+
+                // Announcement module — only admin/owner can post
+                if (mod.type === "announcement") {
+                    const isAdmin =
+                        memberRecord.role === "owner" || memberRecord.role === "admin";
+                    if (!isAdmin) {
+                        return socket.emit("message:error", {
+                            message: "Only admins can post in announcement modules",
+                        });
+                    }
+                }
+
+                // Validate replyTo
+                if (replyTo) {
+                    const replyMsg = await ModuleMessage.findOne({
+                        _id: replyTo,
+                        moduleId,
+                    });
+                    if (!replyMsg) return;
+                }
+
+                // Create the message
+                const message = await ModuleMessage.create({
+                    moduleId,
+                    workspaceId,
+                    sender: socket.userId,
+                    text: text?.trim() || null,
+                    gifUrl: gifUrl || null,
+                    replyTo: replyTo || null,
+                });
+
+                // Populate sender + replyTo
+                await message.populate("sender", "name avatar");
+                if (message.replyTo) {
+                    await message.populate({
+                        path: "replyTo",
+                        select: "text sender gifUrl",
+                        populate: { path: "sender", select: "name avatar" },
+                    });
+                }
+
+                // Update module lastMessage + unread counts for all members except sender
+                const inc = {};
+                for (const m of workspace.members) {
+                    if (m.user.toString() !== socket.userId) {
+                        inc[`unreadCount.${m.user}`] = 1;
+                    }
+                }
+                await Module.findByIdAndUpdate(moduleId, {
+                    lastMessage: {
+                        text: gifUrl ? "GIF" : text.trim(),
+                        sender: socket.userId,
+                        timestamp: message.createdAt,
+                    },
+                    $inc: inc,
+                });
+
+                const payload = {
+                    _id: message._id,
+                    tempId,
+                    moduleId,
+                    workspaceId,
+                    sender: message.sender,
+                    text: message.text,
+                    gifUrl: message.gifUrl,
+                    replyTo: message.replyTo || null,
+                    reactions: {},
+                    isEdited: false,
+                    isDeleted: false,
+                    createdAt: message.createdAt,
+                };
+
+                // Broadcast to everyone in the module room (sender included)
+                io.to(`module:${moduleId}`).emit("module:message:new", payload);
+
+                // Send unread:update to each other member
+                // Re-fetch module to get fresh unread counts
+                const updatedModule = await Module.findById(moduleId).select(
+                    "unreadCount"
+                );
+                for (const m of workspace.members) {
+                    if (m.user.toString() !== socket.userId) {
+                        const unreadCount =
+                            updatedModule?.unreadCount?.get(m.user.toString()) || 0;
+                        await emitToUser(m.user.toString(), "module:unread:update", {
+                            moduleId,
+                            workspaceId,
+                            unreadCount,
+                        });
+                    }
+                }
+            } catch (err) {
+                console.error("module:message:send error:", err.message);
+                socket.emit("message:error", { message: "Failed to send message" });
+            }
+        }
+    );
+
+    
     // Cleanup function for disconnect
     const cleanup = () => {
         // Clear all module typing timers this socket set
