@@ -563,3 +563,51 @@ exports.leaveWorkspace = async (req, res) => {
     res.status(500).json({ message: "Server error" });
   }
 };
+
+// ---------------------------------------------------------------------------
+// POST /api/workspaces/:workspaceId/invite
+// Generate a new invite link code for the workspace (admin+).
+// Produces an 8-char alphanumeric code (Discord-style, ~48 bits entropy).
+// Uses crypto.randomBytes — no new package needed.
+// ---------------------------------------------------------------------------
+const INVITE_CHARSET =
+  "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+const generateInviteCode = () =>
+  Array.from(crypto.randomBytes(8))
+    .map((b) => INVITE_CHARSET[b % INVITE_CHARSET.length])
+    .join("");
+
+exports.generateInvite = async (req, res) => {
+  try {
+    const wsId = req.workspace._id;
+
+    // Generate a unique 8-char alphanumeric code; retry up to 3 times on collision
+    let code;
+    let attempts = 0;
+    while (attempts < 3) {
+      const candidate = generateInviteCode();
+      const collision = await Workspace.exists({ inviteCode: candidate });
+      if (!collision) {
+        code = candidate;
+        break;
+      }
+      attempts++;
+    }
+
+    if (!code) {
+      return res.status(500).json({
+        message: "Failed to generate a unique invite code. Try again.",
+      });
+    }
+
+    await Workspace.findByIdAndUpdate(wsId, { $set: { inviteCode: code } });
+
+    res.json({
+      inviteCode: code,
+      inviteUrl: `${process.env.SITE_URL}/invite/${code}`,
+    });
+  } catch (err) {
+    console.error("generateInvite error:", err.message);
+    res.status(500).json({ message: "Server error" });
+  }
+};
