@@ -423,6 +423,81 @@ const registerModuleHandlers = (socket, { emitToUser, io }) => {
         });
     });
 
+    // ================================================================
+    // module:seen
+    // ================================================================
+
+    socket.on("module:seen", async ({ moduleId, lastSeenMessageId }) => {
+        if (!moduleId) return;
+
+        try {
+            // Verify user can access this module
+            const mod = await Module.findById(moduleId).select(
+                "workspaceId isPrivate allowedMembers"
+            );
+            if (!mod) return;
+
+            const workspace = await Workspace.findOne({
+                _id: mod.workspaceId,
+                "members.user": socket.userId,
+            }).select("members");
+            if (!workspace) return;
+
+            if (mod.isPrivate) {
+                const memberRecord = workspace.members.find(
+                    (m) => m.user.toString() === socket.userId
+                );
+                const isAdmin =
+                    memberRecord?.role === "owner" || memberRecord?.role === "admin";
+                const isAllowed = mod.allowedMembers
+                    .map(String)
+                    .includes(socket.userId);
+                if (!isAdmin && !isAllowed) return;
+            }
+
+            // Reset unread count for this user
+            await Module.findByIdAndUpdate(moduleId, {
+                $set: { [`unreadCount.${socket.userId}`]: 0 },
+            });
+
+            // Send unread clear event to this user (all active sockets)
+            await emitToUser(socket.userId, "module:unread:update", {
+                moduleId,
+                unreadCount: 0,
+            });
+
+            if (!lastSeenMessageId) return;
+
+            // Find pivot message timestamp for range update
+            const pivot = await ModuleMessage.findOne({
+                _id: lastSeenMessageId,
+                moduleId,
+            }).select("createdAt");
+            if (!pivot) return;
+
+            const seenAt = new Date();
+
+            // Mark all messages up to pivot as read by this user
+            await ModuleMessage.updateMany(
+                {
+                    moduleId,
+                    "readBy.user": { $ne: socket.userId },
+                    createdAt: { $lte: pivot.createdAt },
+                },
+                { $addToSet: { readBy: { user: socket.userId, readAt: seenAt } } }
+            );
+
+            io.to(`module:${moduleId}`).emit("module:message:status", {
+                moduleId,
+                status: "read",
+                upToMessageId: lastSeenMessageId,
+                readBy: { userId: socket.userId, readAt: seenAt },
+            });
+        } catch (err) {
+            console.error("module:seen error:", err.message);
+        }
+    });
+
 
     // Cleanup function for disconnect
     const cleanup = () => {
