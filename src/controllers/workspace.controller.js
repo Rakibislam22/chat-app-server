@@ -611,3 +611,57 @@ exports.generateInvite = async (req, res) => {
     res.status(500).json({ message: "Server error" });
   }
 };
+
+// ---------------------------------------------------------------------------
+// POST /api/workspaces/join/:inviteCode
+// Join a workspace via an invite code. No auth middleware on workspace needed —
+// the invite code itself is the credential. Only requireAuth runs before this.
+// ---------------------------------------------------------------------------
+exports.joinViaInvite = async (req, res) => {
+  try {
+    const { inviteCode } = req.params;
+    const userId = req.user._id;
+
+    const workspace = await Workspace.findOne({ inviteCode });
+    if (!workspace) {
+      return res
+        .status(404)
+        .json({ message: "Invalid or expired invite link" });
+    }
+
+    // Already a member?
+    const alreadyMember = workspace.members.some(
+      (m) => m.user.toString() === userId.toString(),
+    );
+    if (alreadyMember) {
+      return res
+        .status(400)
+        .json({ message: "You are already a member of this workspace" });
+    }
+
+    // Member cap check
+    if (workspace.members.length >= MAX_WORKSPACE_MEMBERS) {
+      return res
+        .status(400)
+        .json({
+          message: `Workspace has reached the member limit (${MAX_WORKSPACE_MEMBERS})`,
+        });
+    }
+
+    workspace.members.push({ user: userId, role: "member" });
+    await workspace.save();
+
+    await workspace.populate("createdBy", "name avatar");
+
+    const io = req.app.get("io");
+    io.to(`workspace:${workspace._id}`).emit("workspace:member-joined", {
+      workspaceId: workspace._id,
+      user: { _id: userId },
+    });
+
+    res.status(200).json({ ...workspace.toObject(), myRole: "member" });
+  } catch (err) {
+    console.error("joinViaInvite error:", err.message);
+    res.status(500).json({ message: "Server error" });
+  }
+};
