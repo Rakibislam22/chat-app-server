@@ -712,3 +712,42 @@ exports.revokeInvite = async (req, res) => {
     res.status(500).json({ message: "Server error" });
   }
 };
+
+// ---------------------------------------------------------------------------
+// POST /api/workspaces/:workspaceId/categories
+// Add a new category to the workspace (admin+).
+// Body: { name, position? }
+// ---------------------------------------------------------------------------
+exports.addCategory = async (req, res) => {
+  try {
+    const { name, position } = req.body;
+
+    if (!name || !name.trim()) {
+      return res.status(400).json({ message: "Category name is required" });
+    }
+
+    const newCategory = {
+      name: name.trim(),
+      ...(position !== undefined && { position }),
+    };
+
+    const updated = await Workspace.findByIdAndUpdate(
+      req.workspace._id,
+      { $push: { categories: newCategory } },
+      { new: true, runValidators: true },
+    );
+
+    const added = updated.categories[updated.categories.length - 1];
+
+    const io = req.app.get("io");
+    io.to(`workspace:${updated._id}`).emit("workspace:category-added", {
+      workspaceId: updated._id,
+      category: added,
+    });
+
+    res.status(201).json(added);
+  } catch (err) {
+    console.error("addCategory error:", err.message);
+    res.status(500).json({ message: "Server error" });
+  }
+};
