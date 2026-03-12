@@ -113,12 +113,12 @@ router.delete(
   removeMembers,
 );
 
-// @route   PATCH /api/workspaces/:workspaceId/members/:memberId/role
+// @route   PATCH /api/workspaces/:workspaceId/members/:targetUserId/role
 // @desc    Update a member's role (admin ↔ member)
 // @body    { role: "admin" | "member" }
 // @access  Workspace admins and owner
 router.patch(
-  "/:workspaceId/members/:memberId/role",
+  "/:workspaceId/members/:targetUserId/role",
   validateWorkspaceId,
   loadWorkspace,
   isWorkspaceMember,
