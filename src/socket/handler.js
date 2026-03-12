@@ -6,6 +6,7 @@ const jwt = require("jsonwebtoken");
 const { redisClient, getIsRedisConnected } = require("../config/redis");
 const Conversation = require("../models/Conversation");
 const Workspace = require("../models/Workspace");
+const User = require("../models/User");
 
 const createHelpers = require("./helpers");
 const registerPresenceHandlers = require("./presence");
@@ -127,23 +128,28 @@ const socketHandler = (io) => {
           );
 
           if (remainingSockets === 0) {
-            const disconnectTime = Date.now().toString();
-            await redisClient.set(`lastSeen:${socket.userId}`, disconnectTime, {
+            const disconnectTime = Date.now();
+            await redisClient.set(`lastSeen:${socket.userId}`, disconnectTime.toString(), {
               EX: 604800,
             });
-            console.log(
-              `Last seen set for user ${socket.userId}: ${disconnectTime}`,
-            );
+
+            // Persist to DB separately — isolate errors from Redis path
+            try {
+              await User.findByIdAndUpdate(socket.userId, { lastSeen: disconnectTime });
+            } catch (dbErr) {
+              console.error(`Failed to update User.lastSeen for ${socket.userId}:`, dbErr.message);
+            }
+
+            console.log(`Last seen saved for user ${socket.userId}: ${disconnectTime}`);
 
             await redisClient.del(`presence:${socket.userId}`);
 
             io.emit("presence:update", {
               userId: socket.userId,
               online: false,
+              lastSeen: disconnectTime,
             });
-            console.log(
-              `Presence:update emitted for user ${socket.userId} - OFFLINE`,
-            );
+            console.log(`Presence:update emitted for user ${socket.userId} - OFFLINE`);
           } else {
             console.log(
               `User ${socket.userId} still has ${remainingSockets} active socket(s) — staying online`,
