@@ -89,7 +89,13 @@ exports.createWorkspace = async (req, res) => {
       });
     }
 
-    res.status(201).json(workspace);
+    const result = {
+      ...workspace.toObject(),
+      myRole: "owner",
+      memberCount: 1,
+    };
+
+    res.status(201).json(result);
   } catch (err) {
     console.error("createWorkspace error:", err.message);
     // Surface pre-validate hook errors as 400
