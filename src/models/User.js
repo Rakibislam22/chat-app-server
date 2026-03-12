@@ -45,6 +45,18 @@ const userSchema = new mongoose.Schema(
     lockUntil: {
       type: Date,
     },
+    // Profile extras
+    bio: {
+      type: String,
+      maxlength: 160,
+      default: "",
+    },
+    statusMessage: {
+      type: String,
+      maxlength: 80,
+      default: "",
+    },
+
     // resetToken
     resetToken: String,
     resetTokenExpiry: Date,
