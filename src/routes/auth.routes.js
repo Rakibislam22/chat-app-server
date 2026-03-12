@@ -4,6 +4,8 @@ const {
   register,
   login,
   me,
+  updateMe,
+  changePassword,
   oauthCallback,
   verifyOTP,
   resendOTP,
@@ -63,5 +65,11 @@ router.get(
 
 // @route   GET /auth/me
 router.get("/me", auth, me);
+
+// @route   PATCH /auth/me
+router.patch("/me", auth, updateMe);
+
+// @route   PATCH /auth/change-password
+router.patch("/change-password", auth, changePassword);
 
 module.exports = router;

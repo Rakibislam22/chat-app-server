@@ -14,7 +14,12 @@ exports.register = async (req, res) => {
     let user = await User.findOne({ email });
     if (user) {
       if (!user.isVerified) {
-        return res.status(400).json({ message: "Account exists but is not verified. Please login to verify." });
+        return res
+          .status(400)
+          .json({
+            message:
+              "Account exists but is not verified. Please login to verify.",
+          });
       }
       return res.status(400).json({ message: "User already exists" });
     }
@@ -30,26 +35,41 @@ exports.register = async (req, res) => {
         const initialsUrl = `https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=random&size=128&length=1&rounded=true&bold=true`;
 
         // 1. Fetch the image buffer from ui-avatars
-        const imageResponse = await axios.get(initialsUrl, { responseType: 'arraybuffer' });
-        const imageBuffer = Buffer.from(imageResponse.data, 'binary');
+        const imageResponse = await axios.get(initialsUrl, {
+          responseType: "arraybuffer",
+        });
+        const imageBuffer = Buffer.from(imageResponse.data, "binary");
 
         // 2. Prepare FormData for ImgBB
         const formData = new FormData();
-        const safeName = name.replace(/[^a-zA-Z0-9]/g, '').toLowerCase() || 'user';
-        const safeEmailPrefix = email.split('@')[0].replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+        const safeName =
+          name.replace(/[^a-zA-Z0-9]/g, "").toLowerCase() || "user";
+        const safeEmailPrefix = email
+          .split("@")[0]
+          .replace(/[^a-zA-Z0-9]/g, "")
+          .toLowerCase();
         const uniqueFilename = `${safeName}_${safeEmailPrefix}_avatar.png`;
 
-        formData.append('image', imageBuffer, { filename: uniqueFilename, contentType: 'image/png' });
+        formData.append("image", imageBuffer, {
+          filename: uniqueFilename,
+          contentType: "image/png",
+        });
 
         // 3. Upload to ImgBB securely from backend
         const imgbbKey = process.env.IMGBB_API_KEY;
         if (!imgbbKey) {
-          console.warn("IMGBB_API_KEY is missing in backend .env. Defaulting to raw ui-avatars url.");
+          console.warn(
+            "IMGBB_API_KEY is missing in backend .env. Defaulting to raw ui-avatars url.",
+          );
           finalAvatar = initialsUrl;
         } else {
-          const imgbbResponse = await axios.post(`https://api.imgbb.com/1/upload?key=${imgbbKey}`, formData, {
-            headers: formData.getHeaders(),
-          });
+          const imgbbResponse = await axios.post(
+            `https://api.imgbb.com/1/upload?key=${imgbbKey}`,
+            formData,
+            {
+              headers: formData.getHeaders(),
+            },
+          );
 
           if (imgbbResponse.data && imgbbResponse.data.success) {
             finalAvatar = imgbbResponse.data.data.display_url;
@@ -58,7 +78,10 @@ exports.register = async (req, res) => {
           }
         }
       } catch (avatarErr) {
-        console.error("Error generating/uploading fallback avatar:", avatarErr.message);
+        console.error(
+          "Error generating/uploading fallback avatar:",
+          avatarErr.message,
+        );
         // Absolute fallback empty or default
         finalAvatar = "";
       }
@@ -208,6 +231,120 @@ exports.me = async (req, res) => {
     res.json(user);
   } catch (err) {
     console.error(err.message);
+    res.status(500).send("Server error");
+  }
+};
+
+// @desc Update current user's profile (name, bio, statusMessage, avatar)
+exports.updateMe = async (req, res) => {
+  try {
+    const { name, bio, statusMessage, avatar } = req.body;
+
+    const user = await User.findById(req.user.id);
+    if (!user) return res.status(404).json({ message: "User not found" });
+
+    if (name !== undefined) {
+      const trimmed = name.trim();
+      if (!trimmed || trimmed.length > 50)
+        return res
+          .status(400)
+          .json({ message: "Name must be 1–50 characters" });
+      user.name = trimmed;
+    }
+
+    if (bio !== undefined) {
+      if (bio.length > 160)
+        return res
+          .status(400)
+          .json({ message: "Bio must be 160 characters or fewer" });
+      user.bio = bio.trim();
+    }
+
+    if (statusMessage !== undefined) {
+      if (statusMessage.length > 80)
+        return res
+          .status(400)
+          .json({ message: "Status must be 80 characters or fewer" });
+      user.statusMessage = statusMessage.trim();
+    }
+
+    if (avatar !== undefined && avatar !== user.avatar) {
+      // Accept data URIs (base64) — upload to ImgBB from the server
+      if (avatar.startsWith("data:")) {
+        const imgbbKey = process.env.IMGBB_API_KEY;
+        if (!imgbbKey) {
+          return res
+            .status(500)
+            .json({ message: "Image upload not configured" });
+        }
+        try {
+          const base64Data = avatar.split(",")[1];
+          const formData = new FormData();
+          formData.append("image", base64Data);
+          const imgbbRes = await axios.post(
+            `https://api.imgbb.com/1/upload?key=${imgbbKey}`,
+            formData,
+            { headers: formData.getHeaders() },
+          );
+          if (imgbbRes.data?.success) {
+            user.avatar = imgbbRes.data.data.display_url;
+          } else {
+            return res.status(500).json({ message: "Image upload failed" });
+          }
+        } catch (uploadErr) {
+          console.error("ImgBB upload error:", uploadErr.message);
+          return res.status(500).json({ message: "Image upload failed" });
+        }
+      } else {
+        // Plain URL — store directly
+        user.avatar = avatar;
+      }
+    }
+
+    await user.save();
+
+    const { password: _pw, ...safeUser } = user.toObject();
+    res.json(safeUser);
+  } catch (err) {
+    console.error("updateMe error:", err.message);
+    res.status(500).send("Server error");
+  }
+};
+
+// @desc Change password (local accounts only)
+exports.changePassword = async (req, res) => {
+  try {
+    const { currentPassword, newPassword } = req.body;
+
+    if (!currentPassword || !newPassword)
+      return res.status(400).json({ message: "Both passwords are required" });
+
+    if (newPassword.length < 8)
+      return res
+        .status(400)
+        .json({ message: "New password must be at least 8 characters" });
+
+    const user = await User.findById(req.user.id);
+    if (!user) return res.status(404).json({ message: "User not found" });
+
+    if (user.provider !== "local")
+      return res
+        .status(400)
+        .json({
+          message: "Password change is not available for OAuth accounts",
+        });
+
+    const isMatch = await bcrypt.compare(currentPassword, user.password);
+    if (!isMatch)
+      return res.status(400).json({ message: "Current password is incorrect" });
+
+    const salt = await bcrypt.genSalt(10);
+    user.password = await bcrypt.hash(newPassword, salt);
+    await user.save();
+
+    res.json({ message: "Password changed successfully" });
+  } catch (err) {
+    console.error("changePassword error:", err.message);
     res.status(500).send("Server error");
   }
 };
