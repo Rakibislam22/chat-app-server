@@ -127,29 +127,29 @@ const socketHandler = (io) => {
             `sockets:${socket.userId}`,
           );
 
-            if (remainingSockets === 0) {
-              const disconnectTime = Date.now();
-              await redisClient.set(`lastSeen:${socket.userId}`, disconnectTime.toString(), {
-                EX: 604800,
-              });
-              
-              // Also persist to DB for long-term storage
+          if (remainingSockets === 0) {
+            const disconnectTime = Date.now();
+            await redisClient.set(`lastSeen:${socket.userId}`, disconnectTime.toString(), {
+              EX: 604800,
+            });
+
+            // Persist to DB separately — isolate errors from Redis path
+            try {
               await User.findByIdAndUpdate(socket.userId, { lastSeen: disconnectTime });
+            } catch (dbErr) {
+              console.error(`Failed to update User.lastSeen for ${socket.userId}:`, dbErr.message);
+            }
 
-              console.log(
-                `Last seen saved to Redis and DB for user ${socket.userId}: ${disconnectTime}`,
-              );
+            console.log(`Last seen saved for user ${socket.userId}: ${disconnectTime}`);
 
-              await redisClient.del(`presence:${socket.userId}`);
+            await redisClient.del(`presence:${socket.userId}`);
 
-              io.emit("presence:update", {
-                userId: socket.userId,
-                online: false,
-                lastSeen: disconnectTime,
-              });
-            console.log(
-              `Presence:update emitted for user ${socket.userId} - OFFLINE`,
-            );
+            io.emit("presence:update", {
+              userId: socket.userId,
+              online: false,
+              lastSeen: disconnectTime,
+            });
+            console.log(`Presence:update emitted for user ${socket.userId} - OFFLINE`);
           } else {
             console.log(
               `User ${socket.userId} still has ${remainingSockets} active socket(s) — staying online`,

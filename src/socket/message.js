@@ -94,7 +94,7 @@ const registerMessageHandlers = (socket, { emitToUser, isUserOnline, io }) => {
               updatedAt: message.createdAt,
               $inc: { [`unreadCount.${receiverId}`]: 1 },
             },
-            { new: true },
+            { returnDocument: 'after' },
           );
         }
 

@@ -370,7 +370,7 @@ const registerModuleHandlers = (socket, { emitToUser, io }) => {
       if (!workspace) return;
 
       const updated = await ModuleMessage.findOneAndUpdate(
-        { _id: msgId, moduleId },
+        { _id: messageId, moduleId },
         { $addToSet: { deletedFor: socket.userId } },
         { new: true, select: "_id" },
       );
