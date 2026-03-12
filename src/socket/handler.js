@@ -6,6 +6,7 @@ const jwt = require("jsonwebtoken");
 const { redisClient, getIsRedisConnected } = require("../config/redis");
 const Conversation = require("../models/Conversation");
 const Workspace = require("../models/Workspace");
+const User = require("../models/User");
 
 const createHelpers = require("./helpers");
 const registerPresenceHandlers = require("./presence");
@@ -126,21 +127,26 @@ const socketHandler = (io) => {
             `sockets:${socket.userId}`,
           );
 
-          if (remainingSockets === 0) {
-            const disconnectTime = Date.now().toString();
-            await redisClient.set(`lastSeen:${socket.userId}`, disconnectTime, {
-              EX: 604800,
-            });
-            console.log(
-              `Last seen set for user ${socket.userId}: ${disconnectTime}`,
-            );
+            if (remainingSockets === 0) {
+              const disconnectTime = Date.now();
+              await redisClient.set(`lastSeen:${socket.userId}`, disconnectTime.toString(), {
+                EX: 604800,
+              });
+              
+              // Also persist to DB for long-term storage
+              await User.findByIdAndUpdate(socket.userId, { lastSeen: disconnectTime });
 
-            await redisClient.del(`presence:${socket.userId}`);
+              console.log(
+                `Last seen saved to Redis and DB for user ${socket.userId}: ${disconnectTime}`,
+              );
 
-            io.emit("presence:update", {
-              userId: socket.userId,
-              online: false,
-            });
+              await redisClient.del(`presence:${socket.userId}`);
+
+              io.emit("presence:update", {
+                userId: socket.userId,
+                online: false,
+                lastSeen: disconnectTime,
+              });
             console.log(
               `Presence:update emitted for user ${socket.userId} - OFFLINE`,
             );

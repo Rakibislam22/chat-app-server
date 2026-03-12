@@ -825,7 +825,7 @@ exports.updateCategory = async (req, res) => {
       req.workspace._id,
       { $set: updateFields },
       {
-        new: true,
+        returnDocument: 'after',
         arrayFilters: [{ "cat._id": category._id }],
         runValidators: true,
       },
