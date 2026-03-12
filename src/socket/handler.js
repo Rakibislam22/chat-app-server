@@ -1,0 +1,166 @@
+/**
+ * Socket.io entry point
+ */
+
+const jwt = require("jsonwebtoken");
+const { redisClient, getIsRedisConnected } = require("../config/redis");
+const Conversation = require("../models/Conversation");
+const Workspace = require("../models/Workspace");
+const User = require("../models/User");
+
+const createHelpers = require("./helpers");
+const registerPresenceHandlers = require("./presence");
+const registerMessageHandlers = require("./message");
+const registerConversationHandlers = require("./conversation");
+const registerTypingHandlers = require("./typing");
+const registerWorkspaceHandlers = require("./workspace");
+const registerModuleHandlers = require("./module");
+
+const socketHandler = (io) => {
+  const helpers = createHelpers(io);
+
+  // --- Socket Authentication Middleware ---
+  io.use((socket, next) => {
+    const token = socket.handshake.auth?.token;
+
+    if (!token) {
+      return next(new Error("Authentication error: No token provided"));
+    }
+
+    try {
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      socket.userId = decoded.id;
+      next();
+    } catch (err) {
+      return next(new Error("Authentication error: Invalid token"));
+    }
+  });
+
+  io.on("connection", async (socket) => {
+    console.log(`✅ User connected: ${socket.id} (userId: ${socket.userId})`);
+
+    // Register presence handlers and start the heartbeat interval
+    const { refreshPresence, cleanup: cleanupPresence } =
+      registerPresenceHandlers(socket, io);
+
+    // Store userId → socketId in a Redis SET (supports multiple tabs/devices)
+    if (getIsRedisConnected()) {
+      try {
+        const socketsKey = `sockets:${socket.userId}`;
+        await redisClient.sAdd(socketsKey, socket.id);
+        await redisClient.expire(socketsKey, 86400);
+        await refreshPresence(true); // initial connection → broadcast online status
+      } catch (err) {
+        console.error("Redis set socket error:", err);
+      }
+    }
+
+    // Auto-join all conversation rooms for this user so they receive
+    // broadcasts (like reactions) without needing to manually open each conversation.
+    try {
+      const allConvs = await Conversation.find({
+        participants: socket.userId,
+      }).select("_id type");
+
+      for (const conv of allConvs) {
+        socket.join(`conv:${conv._id}`);
+      }
+      if (allConvs.length > 0) {
+        console.log(
+          `🏠 User ${socket.userId} auto-joined ${allConvs.length} room(s)`,
+        );
+      }
+    } catch (err) {
+      console.error("Conversation room auto-join error:", err.message);
+    }
+
+    // Auto-join all workspace rooms for this user
+    try {
+      const userWorkspaces = await Workspace.find({
+        "members.user": socket.userId,
+      }).select("_id");
+
+      for (const ws of userWorkspaces) {
+        socket.join(`workspace:${ws._id}`);
+      }
+      if (userWorkspaces.length > 0) {
+        console.log(
+          `🏢 User ${socket.userId} auto-joined ${userWorkspaces.length} workspace room(s)`,
+        );
+      }
+    } catch (err) {
+      console.error("Workspace room auto-join error:", err.message);
+    }
+
+    // Delegate event handling to focused modules
+    registerMessageHandlers(socket, { ...helpers, io });
+    registerConversationHandlers(socket, { ...helpers, io });
+    const { cleanup: cleanupTyping } = registerTypingHandlers(socket, {
+      ...helpers,
+      io,
+    });
+    registerWorkspaceHandlers(socket, { ...helpers, io });
+    const { cleanup: cleanupModules } = registerModuleHandlers(socket, {
+      ...helpers,
+      io,
+    });
+
+    // ----------------------------------------------------------------
+    // Handle disconnection — clean up Redis mapping
+    // ----------------------------------------------------------------
+    socket.on("disconnect", async () => {
+      console.log(
+        `❌ User disconnected: ${socket.id} (userId: ${socket.userId})`,
+      );
+
+      cleanupPresence();
+      await cleanupTyping();
+      cleanupModules();
+
+      if (getIsRedisConnected()) {
+        try {
+          // Remove only this socket from the SET (other tabs remain)
+          await redisClient.sRem(`sockets:${socket.userId}`, socket.id);
+
+          // Only mark offline when no sockets remain for this user
+          const remainingSockets = await redisClient.sCard(
+            `sockets:${socket.userId}`,
+          );
+
+          if (remainingSockets === 0) {
+            const disconnectTime = Date.now();
+            await redisClient.set(`lastSeen:${socket.userId}`, disconnectTime.toString(), {
+              EX: 604800,
+            });
+
+            // Persist to DB separately — isolate errors from Redis path
+            try {
+              await User.findByIdAndUpdate(socket.userId, { lastSeen: disconnectTime });
+            } catch (dbErr) {
+              console.error(`Failed to update User.lastSeen for ${socket.userId}:`, dbErr.message);
+            }
+
+            console.log(`Last seen saved for user ${socket.userId}: ${disconnectTime}`);
+
+            await redisClient.del(`presence:${socket.userId}`);
+
+            io.emit("presence:update", {
+              userId: socket.userId,
+              online: false,
+              lastSeen: disconnectTime,
+            });
+            console.log(`Presence:update emitted for user ${socket.userId} - OFFLINE`);
+          } else {
+            console.log(
+              `User ${socket.userId} still has ${remainingSockets} active socket(s) — staying online`,
+            );
+          }
+        } catch (err) {
+          console.error("Redis disconnect error:", err);
+        }
+      }
+    });
+  });
+};
+
+module.exports = socketHandler;
