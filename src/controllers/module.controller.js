@@ -132,7 +132,7 @@ exports.createModule = async (req, res) => {
 
     // ── 9. Emit socket event ─────────────────────────────────────
     const io = req.app.get("io");
-    io.to(`workspace:${workspaceId}`).emit("module:created", module);
+    io.to(`workspace:${workspaceId}`).emit("module:created", { module });
 
     // ── 10. Respond ──────────────────────────────────────────────
     return res.status(201).json(module);
@@ -816,6 +816,7 @@ exports.editModuleMessage = async (req, res) => {
       moduleId,
       text: message.text,
       editedAt: message.editedAt,
+      isEdited: true,
     });
 
     return res.json(message);
@@ -878,9 +879,9 @@ exports.deleteModuleMessage = async (req, res) => {
 
       const io = req.app.get("io");
       io.to(`module:${moduleId}`).emit("module:message:deleted", {
-        msgId,
+        messageId: msgId,
         moduleId,
-        deletedForEveryone: true,
+        forEveryone: true,
       });
     } else {
       // Delete for me — add to deletedFor silently
@@ -966,7 +967,7 @@ exports.reactToModuleMessage = async (req, res) => {
     // ── 6. Emit socket event ─────────────────────────────────────
     const io = req.app.get("io");
     io.to(`module:${moduleId}`).emit("module:message:reacted", {
-      msgId,
+      messageId: msgId,
       moduleId,
       reactions: reactionsObj,
     });

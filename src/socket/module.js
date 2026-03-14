@@ -215,12 +215,12 @@ const registerModuleHandlers = (socket, { emitToUser, io }) => {
   // module:message:react
   // ================================================================
 
-  socket.on("module:message:react", async ({ msgId, moduleId, emoji }) => {
-    if (!msgId || !moduleId || !emoji) return;
+  socket.on("module:message:react", async ({ messageId, moduleId, emoji }) => {
+    if (!messageId || !moduleId || !emoji) return;
 
     try {
       const message = await ModuleMessage.findOne({
-        _id: msgId,
+        _id: messageId,
         moduleId,
       }).select("workspaceId reactions isDeleted");
       if (!message || message.isDeleted) return;
@@ -247,7 +247,7 @@ const registerModuleHandlers = (socket, { emitToUser, io }) => {
           : { $set: { [`reactions.${emoji}`]: newUsers } };
 
       const updated = await ModuleMessage.findOneAndUpdate(
-        { _id: msgId, moduleId, isDeleted: false },
+        { _id: messageId, moduleId, isDeleted: false },
         updateOp,
         { new: true, select: "reactions" },
       );
@@ -260,7 +260,7 @@ const registerModuleHandlers = (socket, { emitToUser, io }) => {
       }
 
       io.to(`module:${moduleId}`).emit("module:message:reacted", {
-        msgId,
+        messageId,
         moduleId,
         reactions: reactionsObj,
       });
@@ -273,11 +273,11 @@ const registerModuleHandlers = (socket, { emitToUser, io }) => {
   // module:message:edit
   // ================================================================
 
-  socket.on("module:message:edit", async ({ msgId, moduleId, newText }) => {
-    if (!msgId || !moduleId || !newText?.trim()) return;
+  socket.on("module:message:edit", async ({ messageId, moduleId, newText }) => {
+    if (!messageId || !moduleId || !newText?.trim()) return;
 
     try {
-      const message = await ModuleMessage.findOne({ _id: msgId, moduleId });
+      const message = await ModuleMessage.findOne({ _id: messageId, moduleId });
       if (!message) return;
 
       const workspace = await Workspace.findOne({
@@ -314,10 +314,10 @@ const registerModuleHandlers = (socket, { emitToUser, io }) => {
   // module:message:delete (delete for everyone)
   // ================================================================
 
-  socket.on("module:message:delete", async ({ msgId, moduleId }) => {
-    if (!msgId || !moduleId) return;
+  socket.on("module:message:delete", async ({ messageId, moduleId }) => {
+    if (!messageId || !moduleId) return;
     try {
-      const message = await ModuleMessage.findOne({ _id: msgId, moduleId });
+      const message = await ModuleMessage.findOne({ _id: messageId, moduleId });
       if (!message) return;
 
       // Only sender OR workspace admin/owner can delete for everyone
@@ -341,9 +341,9 @@ const registerModuleHandlers = (socket, { emitToUser, io }) => {
       await message.save();
 
       io.to(`module:${moduleId}`).emit("module:message:deleted", {
-        msgId: message._id,
+        messageId: message._id,
         moduleId,
-        deletedForEveryone: true,
+        forEveryone: true,
       });
     } catch (err) {
       console.error("module:message:delete error:", err.message);
@@ -354,11 +354,11 @@ const registerModuleHandlers = (socket, { emitToUser, io }) => {
   // module:message:deleteForMe
   // ================================================================
 
-  socket.on("module:message:deleteForMe", async ({ msgId, moduleId }) => {
-    if (!msgId || !moduleId) return;
+  socket.on("module:message:deleteForMe", async ({ messageId, moduleId }) => {
+    if (!messageId || !moduleId) return;
     try {
       const message = await ModuleMessage.findOne({
-        _id: msgId,
+        _id: messageId,
         moduleId,
       }).select("workspaceId");
       if (!message) return;
@@ -370,14 +370,14 @@ const registerModuleHandlers = (socket, { emitToUser, io }) => {
       if (!workspace) return;
 
       const updated = await ModuleMessage.findOneAndUpdate(
-        { _id: msgId, moduleId },
+        { _id: messageId, moduleId },
         { $addToSet: { deletedFor: socket.userId } },
         { new: true, select: "_id" },
       );
       if (!updated) return;
 
       // Only notify this socket — it's a private action
-      socket.emit("module:message:deletedForMe", { msgId, moduleId });
+      socket.emit("module:message:deletedForMe", { messageId, moduleId });
     } catch (err) {
       console.error("module:message:deleteForMe error:", err.message);
     }

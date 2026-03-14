@@ -16,7 +16,12 @@ exports.getLastSeen = async (req, res) => {
     const lastSeenTimestamp = await redisClient.get(`lastSeen:${userId}`);
 
     if (!lastSeenTimestamp) {
-      return res.json({ userId, lastSeen: null });
+      // Fallback to DB
+      const user = await User.findById(userId).select("lastSeen");
+      return res.json({ 
+        userId, 
+        lastSeen: user?.lastSeen ? new Date(user.lastSeen).getTime() : null 
+      });
     }
 
     res.json({ userId, lastSeen: parseInt(lastSeenTimestamp) });
@@ -41,18 +46,40 @@ exports.getLastSeenBatch = async (req, res) => {
     }
 
     const result = {};
+    const offlineUserIds = [];
+
     for (const userId of userIds) {
       const isOnline = await redisClient.exists(`presence:${userId}`);
-
       if (isOnline) {
         result[userId] = { online: true, lastSeen: null };
       } else {
         const lastSeenTimestamp = await redisClient.get(`lastSeen:${userId}`);
-        result[userId] = {
-          online: false,
-          lastSeen: lastSeenTimestamp ? parseInt(lastSeenTimestamp) : null,
-        };
+        if (lastSeenTimestamp) {
+          result[userId] = {
+            online: false,
+            lastSeen: parseInt(lastSeenTimestamp),
+          };
+        } else {
+          // Track for DB fallback
+          offlineUserIds.push(userId);
+        }
       }
+    }
+
+    // DB Fallback for users not in Redis
+    if (offlineUserIds.length > 0) {
+      const dbUsers = await User.find({ _id: { $in: offlineUserIds } }).select("lastSeen");
+      const dbMap = {};
+      dbUsers.forEach(u => {
+        dbMap[u._id.toString()] = u.lastSeen ? new Date(u.lastSeen).getTime() : null;
+      });
+
+      offlineUserIds.forEach(id => {
+        result[id] = {
+          online: false,
+          lastSeen: dbMap[id] || null
+        };
+      });
     }
 
     res.json(result);
