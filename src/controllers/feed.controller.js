@@ -477,7 +477,7 @@ exports.reactToPost = async (req, res) => {
           $addToSet: { [`reactions.${emoji}`]: userId },
           $inc: { reactionCount: 1 },
         },
-        { new: true },
+        { returnDocument: "after" },
       );
 
       // Bonus guard — only the first writer whose filter matches wins.
@@ -492,13 +492,7 @@ exports.reactToPost = async (req, res) => {
         // +2 for the reaction; +5 if bonus was just triggered
         const bonusDelta = bonusResult ? 5 : 0;
         const delta = 2 + bonusDelta;
-        await User.findByIdAndUpdate(authorId, [
-          {
-            $set: {
-              reputation: { $max: [0, { $add: ["$reputation", delta] }] },
-            },
-          },
-        ]);
+        await User.findByIdAndUpdate(authorId, { $inc: { reputation: delta } });
       }
     } else {
       // Remove reaction.
@@ -516,17 +510,19 @@ exports.reactToPost = async (req, res) => {
           $pull: { [`reactions.${emoji}`]: userId },
           $set: { reactionCount: newCount },
         },
-        { new: true },
+        { returnDocument: "after" },
       );
 
       if (!isSelf) {
-        await User.findByIdAndUpdate(authorId, [
-          {
-            $set: {
-              reputation: { $max: [0, { $add: ["$reputation", -2] }] },
-            },
-          },
-        ]);
+        // Decrement only if reputation >= 2 to stay floored at 0;
+        // if it was 0 or 1, clamp to 0 explicitly.
+        const floored = await User.findOneAndUpdate(
+          { _id: authorId, reputation: { $gte: 2 } },
+          { $inc: { reputation: -2 } },
+        );
+        if (!floored) {
+          await User.findByIdAndUpdate(authorId, { $set: { reputation: 0 } });
+        }
       }
     }
 
