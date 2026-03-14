@@ -1,5 +1,6 @@
 const mongoose = require("mongoose");
 const Post = require("../models/Post");
+const User = require("../models/User");
 
 const VALID_TYPES = [
   "post",
@@ -74,12 +75,7 @@ const normalizeScreenshots = (screenshots) => {
 
 const normalizeLinkPreview = (linkPreview) => {
   if (!linkPreview || typeof linkPreview !== "object") {
-    return {
-      url: null,
-      title: null,
-      description: null,
-      image: null,
-    };
+    return { url: null, title: null, description: null, image: null };
   }
 
   return {
@@ -123,12 +119,8 @@ const normalizePoll = (poll) => {
     ? poll.options
         .map((option) => {
           if (typeof option === "string") {
-            return {
-              text: option.trim(),
-              votes: [],
-            };
+            return { text: option.trim(), votes: [] };
           }
-
           return {
             text: String(option?.text || "").trim(),
             votes: Array.isArray(option?.votes) ? option.votes : [],
@@ -165,7 +157,6 @@ const normalizePostPayload = (body) => {
 
   if (hasOwn(body, "isPinned")) payload.isPinned = Boolean(body.isPinned);
   if (hasOwn(body, "status")) payload.status = body.status;
-
   if (hasOwn(body, "codeBlocks"))
     payload.codeBlocks = normalizeCodeBlocks(body.codeBlocks);
   if (hasOwn(body, "screenshots"))
@@ -183,63 +174,36 @@ const normalizePostPayload = (body) => {
 };
 
 const applyUpdatePayload = (post, body) => {
-  if (hasOwn(body, "title")) {
+  if (hasOwn(body, "title"))
     post.title = body.title ? String(body.title).trim() : null;
-  }
-
-  if (hasOwn(body, "content")) {
+  if (hasOwn(body, "content"))
     post.content = body.content ? String(body.content) : "";
-  }
-
-  if (hasOwn(body, "tags")) {
-    post.tags = normalizeTags(body.tags);
-  }
-
-  if (hasOwn(body, "isPrivate")) {
-    post.isPrivate = Boolean(body.isPrivate);
-  }
-
-  if (hasOwn(body, "codeBlocks")) {
+  if (hasOwn(body, "tags")) post.tags = normalizeTags(body.tags);
+  if (hasOwn(body, "isPrivate")) post.isPrivate = Boolean(body.isPrivate);
+  if (hasOwn(body, "codeBlocks"))
     post.codeBlocks = normalizeCodeBlocks(body.codeBlocks);
-  }
-
-  if (hasOwn(body, "linkPreview")) {
+  if (hasOwn(body, "linkPreview"))
     post.linkPreview = normalizeLinkPreview(body.linkPreview);
-  }
-
-  if (hasOwn(body, "screenshots")) {
+  if (hasOwn(body, "screenshots"))
     post.screenshots = normalizeScreenshots(body.screenshots);
-  }
-
   if (hasOwn(body, "resourceCategory")) {
     post.resourceCategory = body.resourceCategory
       ? String(body.resourceCategory).trim()
       : null;
   }
-
-  if (hasOwn(body, "poll")) {
-    post.poll = normalizePoll(body.poll);
-  }
-
-  if (hasOwn(body, "status")) {
-    post.status = body.status;
-  }
+  if (hasOwn(body, "poll")) post.poll = normalizePoll(body.poll);
+  if (hasOwn(body, "status")) post.status = body.status;
 };
 
 const getEffectiveSort = (tab, sort) => {
-  if (sort && SORT_PRESETS[sort]) {
-    return SORT_PRESETS[sort];
-  }
-
-  if (tab && SORT_PRESETS[tab]) {
-    return SORT_PRESETS[tab];
-  }
-
+  if (sort && SORT_PRESETS[sort]) return SORT_PRESETS[sort];
+  if (tab && SORT_PRESETS[tab]) return SORT_PRESETS[tab];
   return SORT_PRESETS.latest;
 };
 
-// @desc    Get paginated feed posts
-// @route   GET /api/feed/posts?tab=&page=&limit=&type=&tags=&sort=
+// ---------------------------------------------------------------------------
+// GET /api/feed/posts
+// ---------------------------------------------------------------------------
 exports.getPosts = async (req, res) => {
   try {
     const userId = req.user.id;
@@ -253,9 +217,7 @@ exports.getPosts = async (req, res) => {
       : "all";
     const sort = req.query.sort ? String(req.query.sort).toLowerCase() : null;
 
-    const filter = {
-      $or: [{ isPrivate: false }, { author: userId }],
-    };
+    const filter = { $or: [{ isPrivate: false }, { author: userId }] };
 
     if (tab === "qa") {
       filter.type = "question";
@@ -263,19 +225,25 @@ exports.getPosts = async (req, res) => {
       filter.type = requestedType;
     }
 
+    // Following tab — filter to posts by people this user follows
+    if (tab === "following") {
+      const me = await User.findById(userId).select("following");
+      const followingIds = me?.following || [];
+      filter.author = { $in: followingIds };
+      // Remove private restriction for following feed
+      delete filter.$or;
+    }
+
     const tags = normalizeTags(req.query.tags);
     if (tags.length) {
       filter.tags = { $in: tags };
     }
 
-    // NOTE: "following" tab currently falls back to normal feed because
-    // following-user/tag graph is not yet stored in User schema.
-
     const effectiveSort = getEffectiveSort(tab, sort);
 
     const [posts, total] = await Promise.all([
       Post.find(filter)
-        .populate("author", "name avatar")
+        .populate("author", "name avatar reputation")
         .sort(effectiveSort)
         .skip(skip)
         .limit(limit),
@@ -284,20 +252,16 @@ exports.getPosts = async (req, res) => {
 
     const hasMore = page * limit < total;
 
-    res.json({
-      posts,
-      total,
-      page,
-      hasMore,
-    });
+    res.json({ posts, total, page, hasMore });
   } catch (err) {
     console.error("getPosts error:", err.message);
     res.status(500).json({ message: "Server error" });
   }
 };
 
-// @desc    Get single post by id
-// @route   GET /api/feed/posts/:id
+// ---------------------------------------------------------------------------
+// GET /api/feed/posts/:id
+// ---------------------------------------------------------------------------
 exports.getPost = async (req, res) => {
   try {
     const userId = req.user.id;
@@ -307,7 +271,10 @@ exports.getPost = async (req, res) => {
       return res.status(404).json({ message: "Post not found" });
     }
 
-    const post = await Post.findById(id).populate("author", "name avatar");
+    const post = await Post.findById(id).populate(
+      "author",
+      "name avatar reputation",
+    );
 
     if (!post) {
       return res.status(404).json({ message: "Post not found" });
@@ -325,8 +292,9 @@ exports.getPost = async (req, res) => {
   }
 };
 
-// @desc    Create new post
-// @route   POST /api/feed/posts
+// ---------------------------------------------------------------------------
+// POST /api/feed/posts
+// ---------------------------------------------------------------------------
 exports.createPost = async (req, res) => {
   try {
     const userId = req.user.id;
@@ -341,7 +309,7 @@ exports.createPost = async (req, res) => {
     const created = await Post.create(payload);
     const post = await Post.findById(created._id).populate(
       "author",
-      "name avatar",
+      "name avatar reputation",
     );
 
     res.status(201).json(post);
@@ -354,8 +322,9 @@ exports.createPost = async (req, res) => {
   }
 };
 
-// @desc    Update an existing post
-// @route   PATCH /api/feed/posts/:id
+// ---------------------------------------------------------------------------
+// PATCH /api/feed/posts/:id
+// ---------------------------------------------------------------------------
 exports.updatePost = async (req, res) => {
   try {
     const userId = req.user.id;
@@ -366,9 +335,7 @@ exports.updatePost = async (req, res) => {
     }
 
     const post = await Post.findById(id);
-    if (!post) {
-      return res.status(404).json({ message: "Post not found" });
-    }
+    if (!post) return res.status(404).json({ message: "Post not found" });
 
     if (post.author.toString() !== userId) {
       return res
@@ -382,7 +349,7 @@ exports.updatePost = async (req, res) => {
 
     applyUpdatePayload(post, req.body);
     await post.save();
-    await post.populate("author", "name avatar");
+    await post.populate("author", "name avatar reputation");
 
     res.json(post);
   } catch (err) {
@@ -394,8 +361,9 @@ exports.updatePost = async (req, res) => {
   }
 };
 
-// @desc    Delete a post
-// @route   DELETE /api/feed/posts/:id
+// ---------------------------------------------------------------------------
+// DELETE /api/feed/posts/:id
+// ---------------------------------------------------------------------------
 exports.deletePost = async (req, res) => {
   try {
     const userId = req.user.id;
@@ -406,9 +374,7 @@ exports.deletePost = async (req, res) => {
     }
 
     const post = await Post.findById(id);
-    if (!post) {
-      return res.status(404).json({ message: "Post not found" });
-    }
+    if (!post) return res.status(404).json({ message: "Post not found" });
 
     if (post.author.toString() !== userId) {
       return res
@@ -422,5 +388,175 @@ exports.deletePost = async (req, res) => {
   } catch (err) {
     console.error("deletePost error:", err.message);
     res.status(500).json({ message: "Server error" });
+  }
+};
+
+// ---------------------------------------------------------------------------
+// POST /api/feed/users/:id/follow
+// Toggle follow / unfollow. Returns { following: Boolean }
+// ---------------------------------------------------------------------------
+exports.followUser = async (req, res) => {
+  try {
+    const targetId = req.params.id;
+    const myId = req.user.id;
+
+    if (targetId === myId) {
+      return res.status(400).json({ message: "You cannot follow yourself" });
+    }
+
+    if (!mongoose.Types.ObjectId.isValid(targetId)) {
+      return res.status(400).json({ message: "Invalid user ID" });
+    }
+
+    const [target, me] = await Promise.all([
+      User.findById(targetId).select("_id name"),
+      User.findById(myId).select("following"),
+    ]);
+
+    if (!target) return res.status(404).json({ message: "User not found" });
+    if (!me) return res.status(404).json({ message: "User not found" });
+
+    const alreadyFollowing = me.following.some(
+      (uid) => uid.toString() === targetId,
+    );
+
+    if (alreadyFollowing) {
+      await User.findByIdAndUpdate(myId, { $pull: { following: targetId } });
+      await User.findByIdAndUpdate(targetId, { $pull: { followers: myId } });
+
+      req.app.get("io").to(`feed:user:${targetId}`).emit("feed:follow", {
+        followerId: myId,
+        following: false,
+      });
+
+      return res.json({ following: false, message: "Unfollowed" });
+    } else {
+      await User.findByIdAndUpdate(myId, {
+        $addToSet: { following: targetId },
+      });
+      await User.findByIdAndUpdate(targetId, {
+        $addToSet: { followers: myId },
+      });
+
+      req.app.get("io").to(`feed:user:${targetId}`).emit("feed:follow", {
+        followerId: myId,
+        following: true,
+      });
+
+      return res.json({ following: true, message: "Followed" });
+    }
+  } catch (err) {
+    console.error("followUser error:", err.message);
+    return res.status(500).json({ message: "Server error" });
+  }
+};
+
+// ---------------------------------------------------------------------------
+// GET /api/feed/users/:id/profile
+// Public profile — user info + stats. Viewable by any authenticated user.
+// ---------------------------------------------------------------------------
+exports.getUserProfile = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const myId = req.user.id;
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ message: "Invalid user ID" });
+    }
+
+    const user = await User.findById(id).select(
+      "name avatar bio statusMessage provider reputation following followers followedTags createdAt",
+    );
+    if (!user) return res.status(404).json({ message: "User not found" });
+
+    const postCount = await Post.countDocuments({
+      author: id,
+      status: "published",
+    });
+
+    const isFollowing = user.followers.some((uid) => uid.toString() === myId);
+
+    return res.json({
+      _id: user._id,
+      name: user.name,
+      avatar: user.avatar,
+      bio: user.bio,
+      statusMessage: user.statusMessage,
+      provider: user.provider,
+      reputation: user.reputation,
+      followingCount: user.following.length,
+      followersCount: user.followers.length,
+      followedTags: user.followedTags,
+      postCount,
+      isFollowing,
+      isOwnProfile: id === myId,
+      createdAt: user.createdAt,
+    });
+  } catch (err) {
+    console.error("getUserProfile error:", err.message);
+    return res.status(500).json({ message: "Server error" });
+  }
+};
+
+// ---------------------------------------------------------------------------
+// GET /api/feed/users/:id/posts
+// User's published posts — paginated.
+// ---------------------------------------------------------------------------
+exports.getUserPosts = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ message: "Invalid user ID" });
+    }
+
+    const user = await User.findById(id).select("_id");
+    if (!user) return res.status(404).json({ message: "User not found" });
+
+    const page = clampInt(req.query.page, 1, 1, 100000);
+    const limit = clampInt(req.query.limit, 20, 1, 50);
+    const skip = (page - 1) * limit;
+
+    const [posts, total] = await Promise.all([
+      Post.find({ author: id, status: "published" })
+        .sort({ isPinned: -1, createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .populate("author", "name avatar reputation"),
+      Post.countDocuments({ author: id, status: "published" }),
+    ]);
+
+    const hasMore = skip + posts.length < total;
+
+    return res.json({ posts, hasMore, total, page });
+  } catch (err) {
+    console.error("getUserPosts error:", err.message);
+    return res.status(500).json({ message: "Server error" });
+  }
+};
+
+// ---------------------------------------------------------------------------
+// GET /api/feed/users/top-contributors
+// Leaderboard — top 10 users by reputation.
+// ---------------------------------------------------------------------------
+exports.getTopContributors = async (req, res) => {
+  try {
+    const users = await User.find({ reputation: { $gt: 0 } })
+      .sort({ reputation: -1 })
+      .limit(10)
+      .select("name avatar reputation followers");
+
+    const leaderboard = users.map((u) => ({
+      _id: u._id,
+      name: u.name,
+      avatar: u.avatar,
+      reputation: u.reputation,
+      followersCount: u.followers.length,
+    }));
+
+    return res.json(leaderboard);
+  } catch (err) {
+    console.error("getTopContributors error:", err.message);
+    return res.status(500).json({ message: "Server error" });
   }
 };
