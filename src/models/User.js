@@ -62,13 +62,6 @@ const userSchema = new mongoose.Schema(
     resetToken: String,
     resetTokenExpiry: Date,
 
-    // Feed reputation
-    reputation: {
-      type: Number,
-      default: 0,
-      min: 0,
-    },
-
     // ── Feed / Social fields ─────────────────────────────────────────
     reputation: {
       type: Number,
