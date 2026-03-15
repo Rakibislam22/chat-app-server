@@ -13,6 +13,7 @@ const {
 const {
   createWorkspace,
   listMyWorkspaces,
+  discoverWorkspaces,
   getWorkspace,
   updateWorkspace,
   deleteWorkspace,
@@ -26,6 +27,11 @@ const {
   addCategory,
   updateCategory,
   deleteCategory,
+  createRole,
+  updateRole,
+  deleteRole,
+  assignRolesToMember,
+  joinPublicWorkspace,
 } = require("../controllers/workspace.controller");
 
 // All routes require authentication
@@ -35,7 +41,7 @@ router.use(auth);
 
 // @route   POST /api/workspaces
 // @desc    Create a new workspace
-// @body    { name, description?, avatar?, visibility? }
+// @body    { name, description?, avatar?, banner?, visibility? }
 // @access  Any authenticated user
 router.post("/", createWorkspace);
 
@@ -43,6 +49,12 @@ router.post("/", createWorkspace);
 // @desc    List all workspaces the caller is a member of
 // @access  Any authenticated user
 router.get("/", listMyWorkspaces);
+
+// @route   GET /api/workspaces/discover
+// @desc    Browse public workspaces
+// @query   query?, limit?
+// @access  Any authenticated user  (must be before /:workspaceId routes)
+router.get("/discover", discoverWorkspaces);
 
 // @route   POST /api/workspaces/join/:inviteCode
 // @desc    Join a workspace via an invite code
@@ -204,4 +216,62 @@ router.delete(
   deleteCategory,
 );
 
+// ── Role routes ───────────────────────────────────────────────────────────
+
+// @route   POST /api/workspaces/:workspaceId/roles
+// @desc    Create a custom role
+// @body    { name, color?, permissions? }
+// @access  Workspace admins and owner
+router.post(
+  "/:workspaceId/roles",
+  validateWorkspaceId,
+  loadWorkspace,
+  isWorkspaceMember,
+  isWorkspaceAdmin,
+  createRole,
+);
+
+// @route   PATCH /api/workspaces/:workspaceId/roles/:roleId
+// @desc    Update a custom role's name/color/permissions
+// @access  Workspace admins and owner
+router.patch(
+  "/:workspaceId/roles/:roleId",
+  validateWorkspaceId,
+  loadWorkspace,
+  isWorkspaceMember,
+  isWorkspaceAdmin,
+  updateRole,
+);
+
+// @route   DELETE /api/workspaces/:workspaceId/roles/:roleId
+// @desc    Delete a custom role (also strips from members)
+// @access  Workspace admins and owner
+router.delete(
+  "/:workspaceId/roles/:roleId",
+  validateWorkspaceId,
+  loadWorkspace,
+  isWorkspaceMember,
+  isWorkspaceAdmin,
+  deleteRole,
+);
+
+// @route   PATCH /api/workspaces/:workspaceId/members/:targetUserId/roles
+// @desc    Assign/replace the set of custom role IDs for a member
+// @body    { roleIds: [...] }
+// @access  Workspace admins and owner
+router.patch(
+  "/:workspaceId/members/:targetUserId/roles",
+  validateWorkspaceId,
+  loadWorkspace,
+  isWorkspaceMember,
+  isWorkspaceAdmin,
+  assignRolesToMember,
+);
+
+// @route   POST /api/workspaces/:workspaceId/join-public
+// @desc    Join a public workspace without an invite code
+// @access  Any authenticated user
+router.post("/:workspaceId/join-public", auth, joinPublicWorkspace);
+
 module.exports = router;
+
