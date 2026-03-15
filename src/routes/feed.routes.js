@@ -12,6 +12,7 @@ const {
   getUserProfile,
   getUserPosts,
   getTopContributors,
+  reactToPost,
 } = require("../controllers/feed.controller");
 
 // All routes require authentication
@@ -43,5 +44,10 @@ router.patch("/:id", updatePost);
 // @desc    Delete own post
 // @access  Post owner only
 router.delete("/:id", deletePost);
+
+// @route   POST /api/feed/posts/:id/react
+// @desc    Toggle a reaction emoji on a post
+// @access  Authenticated
+router.post("/:id/react", reactToPost);
 
 module.exports = router;

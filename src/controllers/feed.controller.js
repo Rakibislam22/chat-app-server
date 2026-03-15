@@ -1,6 +1,7 @@
 const mongoose = require("mongoose");
 const Post = require("../models/Post");
 const User = require("../models/User");
+const User = require("../models/User");
 
 const VALID_TYPES = [
   "post",
@@ -18,6 +19,17 @@ const SORT_PRESETS = {
   top: { commentsCount: -1, createdAt: -1 },
   oldest: { createdAt: 1 },
 };
+
+const LEVELS = [
+  { min: 0,   max: 49,  level: "Newcomer",    badge: "🟢" },
+  { min: 50,  max: 199, level: "Contributor",  badge: "🔵" },
+  { min: 200, max: 499, level: "Expert",       badge: "🟣" },
+  { min: 500, max: Infinity, level: "Legend",  badge: "🟡" },
+];
+
+function getLevel(reputation) {
+  return LEVELS.find((l) => reputation >= l.min && reputation <= l.max) ?? LEVELS[0];
+}
 
 const hasOwn = (obj, key) => Object.prototype.hasOwnProperty.call(obj, key);
 
@@ -388,175 +400,5 @@ exports.deletePost = async (req, res) => {
   } catch (err) {
     console.error("deletePost error:", err.message);
     res.status(500).json({ message: "Server error" });
-  }
-};
-
-// ---------------------------------------------------------------------------
-// POST /api/feed/users/:id/follow
-// Toggle follow / unfollow. Returns { following: Boolean }
-// ---------------------------------------------------------------------------
-exports.followUser = async (req, res) => {
-  try {
-    const targetId = req.params.id;
-    const myId = req.user.id;
-
-    if (targetId === myId) {
-      return res.status(400).json({ message: "You cannot follow yourself" });
-    }
-
-    if (!mongoose.Types.ObjectId.isValid(targetId)) {
-      return res.status(400).json({ message: "Invalid user ID" });
-    }
-
-    const [target, me] = await Promise.all([
-      User.findById(targetId).select("_id name"),
-      User.findById(myId).select("following"),
-    ]);
-
-    if (!target) return res.status(404).json({ message: "User not found" });
-    if (!me) return res.status(404).json({ message: "User not found" });
-
-    const alreadyFollowing = me.following.some(
-      (uid) => uid.toString() === targetId,
-    );
-
-    if (alreadyFollowing) {
-      await User.findByIdAndUpdate(myId, { $pull: { following: targetId } });
-      await User.findByIdAndUpdate(targetId, { $pull: { followers: myId } });
-
-      req.app.get("io").to(`feed:user:${targetId}`).emit("feed:follow", {
-        followerId: myId,
-        following: false,
-      });
-
-      return res.json({ following: false, message: "Unfollowed" });
-    } else {
-      await User.findByIdAndUpdate(myId, {
-        $addToSet: { following: targetId },
-      });
-      await User.findByIdAndUpdate(targetId, {
-        $addToSet: { followers: myId },
-      });
-
-      req.app.get("io").to(`feed:user:${targetId}`).emit("feed:follow", {
-        followerId: myId,
-        following: true,
-      });
-
-      return res.json({ following: true, message: "Followed" });
-    }
-  } catch (err) {
-    console.error("followUser error:", err.message);
-    return res.status(500).json({ message: "Server error" });
-  }
-};
-
-// ---------------------------------------------------------------------------
-// GET /api/feed/users/:id/profile
-// Public profile — user info + stats. Viewable by any authenticated user.
-// ---------------------------------------------------------------------------
-exports.getUserProfile = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const myId = req.user.id;
-
-    if (!mongoose.Types.ObjectId.isValid(id)) {
-      return res.status(400).json({ message: "Invalid user ID" });
-    }
-
-    const user = await User.findById(id).select(
-      "name avatar bio statusMessage provider reputation following followers followedTags createdAt",
-    );
-    if (!user) return res.status(404).json({ message: "User not found" });
-
-    const postCount = await Post.countDocuments({
-      author: id,
-      isPrivate: false,
-    });
-
-    const isFollowing = user.followers.some((uid) => uid.toString() === myId);
-
-    return res.json({
-      _id: user._id,
-      name: user.name,
-      avatar: user.avatar,
-      bio: user.bio,
-      statusMessage: user.statusMessage,
-      provider: user.provider,
-      reputation: user.reputation,
-      followingCount: user.following.length,
-      followersCount: user.followers.length,
-      followedTags: user.followedTags,
-      postCount,
-      isFollowing,
-      isOwnProfile: id === myId,
-      createdAt: user.createdAt,
-    });
-  } catch (err) {
-    console.error("getUserProfile error:", err.message);
-    return res.status(500).json({ message: "Server error" });
-  }
-};
-
-// ---------------------------------------------------------------------------
-// GET /api/feed/users/:id/posts
-// User's published posts — paginated.
-// ---------------------------------------------------------------------------
-exports.getUserPosts = async (req, res) => {
-  try {
-    const { id } = req.params;
-
-    if (!mongoose.Types.ObjectId.isValid(id)) {
-      return res.status(400).json({ message: "Invalid user ID" });
-    }
-
-    const user = await User.findById(id).select("_id");
-    if (!user) return res.status(404).json({ message: "User not found" });
-
-    const page = clampInt(req.query.page, 1, 1, 100000);
-    const limit = clampInt(req.query.limit, 20, 1, 50);
-    const skip = (page - 1) * limit;
-
-    const [posts, total] = await Promise.all([
-      Post.find({ author: id, isPrivate: false })
-        .sort({ isPinned: -1, createdAt: -1 })
-        .skip(skip)
-        .limit(limit)
-        .populate("author", "name avatar reputation"),
-      Post.countDocuments({ author: id, isPrivate: false }),
-    ]);
-
-    const hasMore = skip + posts.length < total;
-
-    return res.json({ posts, hasMore, total, page });
-  } catch (err) {
-    console.error("getUserPosts error:", err.message);
-    return res.status(500).json({ message: "Server error" });
-  }
-};
-
-// ---------------------------------------------------------------------------
-// GET /api/feed/users/top-contributors
-// Leaderboard — top 10 users by reputation.
-// ---------------------------------------------------------------------------
-exports.getTopContributors = async (req, res) => {
-  try {
-    const users = await User.find({ reputation: { $gt: 0 } })
-      .sort({ reputation: -1 })
-      .limit(10)
-      .select("name avatar reputation followers");
-
-    const leaderboard = users.map((u) => ({
-      _id: u._id,
-      name: u.name,
-      avatar: u.avatar,
-      reputation: u.reputation,
-      followersCount: u.followers.length,
-    }));
-
-    return res.json(leaderboard);
-  } catch (err) {
-    console.error("getTopContributors error:", err.message);
-    return res.status(500).json({ message: "Server error" });
   }
 };
