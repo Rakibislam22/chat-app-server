@@ -32,6 +32,7 @@ const {
   deleteRole,
   assignRolesToMember,
   joinPublicWorkspace,
+  getWorkspaceByInvite
 } = require("../controllers/workspace.controller");
 
 // All routes require authentication
@@ -60,6 +61,10 @@ router.get("/discover", discoverWorkspaces);
 // @desc    Join a workspace via an invite code
 // @access  Any authenticated user (must be before /:workspaceId routes)
 router.post("/join/:inviteCode", joinViaInvite);
+
+// @route   GET /api/workspaces/invite/:inviteCode
+// @desc    Preview workspace details before joining
+router.get("/invite/:inviteCode", getWorkspaceByInvite);
 
 // @route   GET /api/workspaces/:workspaceId
 // @desc    Get full details of a workspace the caller belongs to

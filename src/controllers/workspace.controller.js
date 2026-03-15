@@ -709,6 +709,38 @@ exports.generateInvite = async (req, res) => {
 // Join a workspace via an invite code. No auth middleware on workspace needed —
 // the invite code itself is the credential. Only requireAuth runs before this.
 // ---------------------------------------------------------------------------
+exports.getWorkspaceByInvite = async (req, res) => {
+  try {
+    const { inviteCode } = req.params;
+    const workspace = await Workspace.findOne({ inviteCode })
+      .select("name avatar description members inviteCodeExpiresAt")
+      .populate("members.user", "name avatar");
+
+    if (!workspace) {
+      return res.status(404).json({ message: "Invalid or expired invite link" });
+    }
+
+    if (
+      workspace.inviteCodeExpiresAt &&
+      new Date() > workspace.inviteCodeExpiresAt
+    ) {
+      return res.status(410).json({ message: "This invite link has expired" });
+    }
+
+    const memberCount = workspace.members.length;
+    res.status(200).json({
+      _id: workspace._id,
+      name: workspace.name,
+      avatar: workspace.avatar,
+      description: workspace.description,
+      memberCount,
+    });
+  } catch (err) {
+    console.error("getWorkspaceByInvite error:", err.message);
+    res.status(500).json({ message: "Server error" });
+  }
+};
+
 exports.joinViaInvite = async (req, res) => {
   try {
     const { inviteCode } = req.params;
