@@ -60,7 +60,6 @@ app.use("/api/workspaces/:workspaceId/modules", moduleRoutes);
 
 // Feed Routes
 app.use("/api/feed/posts", feedRoutes);
-app.use("/api/feed/users", feedUserRoutes);
 
 // Scheduled Message Routes
 app.use("/api/messages", scheduleRoutes);
