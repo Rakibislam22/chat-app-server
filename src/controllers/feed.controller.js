@@ -471,7 +471,7 @@ exports.getUserProfile = async (req, res) => {
 
     const postCount = await Post.countDocuments({
       author: id,
-      status: "published",
+      isPrivate: false,
     });
 
     const isFollowing = user.followers.some((uid) => uid.toString() === myId);
@@ -518,12 +518,12 @@ exports.getUserPosts = async (req, res) => {
     const skip = (page - 1) * limit;
 
     const [posts, total] = await Promise.all([
-      Post.find({ author: id, status: "published" })
+      Post.find({ author: id, isPrivate: false })
         .sort({ isPinned: -1, createdAt: -1 })
         .skip(skip)
         .limit(limit)
         .populate("author", "name avatar reputation"),
-      Post.countDocuments({ author: id, status: "published" }),
+      Post.countDocuments({ author: id, isPrivate: false }),
     ]);
 
     const hasMore = skip + posts.length < total;
