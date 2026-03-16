@@ -489,6 +489,8 @@ exports.getUserProfile = async (req, res) => {
 
     const isFollowing = user.followers.some((uid) => uid.toString() === myId);
 
+    const { level, badge } = getLevel(user.reputation);
+
     return res.json({
       _id: user._id,
       name: user.name,
@@ -497,6 +499,8 @@ exports.getUserProfile = async (req, res) => {
       statusMessage: user.statusMessage,
       provider: user.provider,
       reputation: user.reputation,
+      level,
+      badge,
       followingCount: user.following.length,
       followersCount: user.followers.length,
       followedTags: user.followedTags,
@@ -559,13 +563,18 @@ exports.getTopContributors = async (req, res) => {
       .limit(10)
       .select("name avatar reputation followers");
 
-    const leaderboard = users.map((u) => ({
-      _id: u._id,
-      name: u.name,
-      avatar: u.avatar,
-      reputation: u.reputation,
-      followersCount: u.followers.length,
-    }));
+    const leaderboard = users.map((u) => {
+      const { level, badge } = getLevel(u.reputation);
+      return {
+        _id: u._id,
+        name: u.name,
+        avatar: u.avatar,
+        reputation: u.reputation,
+        level,
+        badge,
+        followersCount: u.followers.length,
+      };
+    });
 
     return res.json(leaderboard);
   } catch (err) {
