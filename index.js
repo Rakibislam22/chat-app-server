@@ -18,6 +18,7 @@ const moduleRoutes = require("./src/routes/module.routes");
 const feedRoutes = require("./src/routes/feed.routes");
 const pinRoutes = require("./src/routes/pin.routes");
 const pollRoutes = require("./src/routes/poll.routes");
+const feedUserRoutes = require("./src/routes/feed.users.routes");
 const mongoose = require("mongoose");
 
 const port = process.env.PORT || 3000;
@@ -66,6 +67,7 @@ app.use("/api/workspaces/:workspaceId/modules", moduleRoutes);
 
 // Feed Routes
 app.use("/api/feed/posts", feedRoutes);
+app.use("/api/feed/users", feedUserRoutes);
 
 // Scheduled Message Routes
 app.use("/api/messages", scheduleRoutes);
