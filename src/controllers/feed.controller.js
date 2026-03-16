@@ -20,14 +20,16 @@ const SORT_PRESETS = {
 };
 
 const LEVELS = [
-  { min: 0,   max: 49,  level: "Newcomer",    badge: "🟢" },
-  { min: 50,  max: 199, level: "Contributor",  badge: "🔵" },
-  { min: 200, max: 499, level: "Expert",       badge: "🟣" },
-  { min: 500, max: Infinity, level: "Legend",  badge: "🟡" },
+  { min: 0, max: 49, level: "Newcomer", badge: "🟢" },
+  { min: 50, max: 199, level: "Contributor", badge: "🔵" },
+  { min: 200, max: 499, level: "Expert", badge: "🟣" },
+  { min: 500, max: Infinity, level: "Legend", badge: "🟡" },
 ];
 
 function getLevel(reputation) {
-  return LEVELS.find((l) => reputation >= l.min && reputation <= l.max) ?? LEVELS[0];
+  return (
+    LEVELS.find((l) => reputation >= l.min && reputation <= l.max) ?? LEVELS[0]
+  );
 }
 
 const hasOwn = (obj, key) => Object.prototype.hasOwnProperty.call(obj, key);
@@ -86,12 +88,7 @@ const normalizeScreenshots = (screenshots) => {
 
 const normalizeLinkPreview = (linkPreview) => {
   if (!linkPreview || typeof linkPreview !== "object") {
-    return {
-      url: null,
-      title: null,
-      description: null,
-      image: null,
-    };
+    return { url: null, title: null, description: null, image: null };
   }
 
   return {
@@ -135,12 +132,8 @@ const normalizePoll = (poll) => {
     ? poll.options
         .map((option) => {
           if (typeof option === "string") {
-            return {
-              text: option.trim(),
-              votes: [],
-            };
+            return { text: option.trim(), votes: [] };
           }
-
           return {
             text: String(option?.text || "").trim(),
             votes: Array.isArray(option?.votes) ? option.votes : [],
@@ -177,7 +170,6 @@ const normalizePostPayload = (body) => {
 
   if (hasOwn(body, "isPinned")) payload.isPinned = Boolean(body.isPinned);
   if (hasOwn(body, "status")) payload.status = body.status;
-
   if (hasOwn(body, "codeBlocks"))
     payload.codeBlocks = normalizeCodeBlocks(body.codeBlocks);
   if (hasOwn(body, "screenshots"))
@@ -195,63 +187,36 @@ const normalizePostPayload = (body) => {
 };
 
 const applyUpdatePayload = (post, body) => {
-  if (hasOwn(body, "title")) {
+  if (hasOwn(body, "title"))
     post.title = body.title ? String(body.title).trim() : null;
-  }
-
-  if (hasOwn(body, "content")) {
+  if (hasOwn(body, "content"))
     post.content = body.content ? String(body.content) : "";
-  }
-
-  if (hasOwn(body, "tags")) {
-    post.tags = normalizeTags(body.tags);
-  }
-
-  if (hasOwn(body, "isPrivate")) {
-    post.isPrivate = Boolean(body.isPrivate);
-  }
-
-  if (hasOwn(body, "codeBlocks")) {
+  if (hasOwn(body, "tags")) post.tags = normalizeTags(body.tags);
+  if (hasOwn(body, "isPrivate")) post.isPrivate = Boolean(body.isPrivate);
+  if (hasOwn(body, "codeBlocks"))
     post.codeBlocks = normalizeCodeBlocks(body.codeBlocks);
-  }
-
-  if (hasOwn(body, "linkPreview")) {
+  if (hasOwn(body, "linkPreview"))
     post.linkPreview = normalizeLinkPreview(body.linkPreview);
-  }
-
-  if (hasOwn(body, "screenshots")) {
+  if (hasOwn(body, "screenshots"))
     post.screenshots = normalizeScreenshots(body.screenshots);
-  }
-
   if (hasOwn(body, "resourceCategory")) {
     post.resourceCategory = body.resourceCategory
       ? String(body.resourceCategory).trim()
       : null;
   }
-
-  if (hasOwn(body, "poll")) {
-    post.poll = normalizePoll(body.poll);
-  }
-
-  if (hasOwn(body, "status")) {
-    post.status = body.status;
-  }
+  if (hasOwn(body, "poll")) post.poll = normalizePoll(body.poll);
+  if (hasOwn(body, "status")) post.status = body.status;
 };
 
 const getEffectiveSort = (tab, sort) => {
-  if (sort && SORT_PRESETS[sort]) {
-    return SORT_PRESETS[sort];
-  }
-
-  if (tab && SORT_PRESETS[tab]) {
-    return SORT_PRESETS[tab];
-  }
-
+  if (sort && SORT_PRESETS[sort]) return SORT_PRESETS[sort];
+  if (tab && SORT_PRESETS[tab]) return SORT_PRESETS[tab];
   return SORT_PRESETS.latest;
 };
 
-// @desc    Get paginated feed posts
-// @route   GET /api/feed/posts?tab=&page=&limit=&type=&tags=&sort=
+// ---------------------------------------------------------------------------
+// GET /api/feed/posts
+// ---------------------------------------------------------------------------
 exports.getPosts = async (req, res) => {
   try {
     const userId = req.user.id;
@@ -265,9 +230,7 @@ exports.getPosts = async (req, res) => {
       : "all";
     const sort = req.query.sort ? String(req.query.sort).toLowerCase() : null;
 
-    const filter = {
-      $or: [{ isPrivate: false }, { author: userId }],
-    };
+    const filter = { $or: [{ isPrivate: false }, { author: userId }] };
 
     if (tab === "qa") {
       filter.type = "question";
@@ -275,19 +238,25 @@ exports.getPosts = async (req, res) => {
       filter.type = requestedType;
     }
 
+    // Following tab — filter to posts by people this user follows
+    if (tab === "following") {
+      const me = await User.findById(userId).select("following");
+      const followingIds = me?.following || [];
+      // Show only non-private posts from followed users (preserves privacy)
+      filter.$or = [{ isPrivate: false }, { author: userId }];
+      filter.author = { $in: followingIds };
+    }
+
     const tags = normalizeTags(req.query.tags);
     if (tags.length) {
       filter.tags = { $in: tags };
     }
 
-    // NOTE: "following" tab currently falls back to normal feed because
-    // following-user/tag graph is not yet stored in User schema.
-
     const effectiveSort = getEffectiveSort(tab, sort);
 
     const [posts, total] = await Promise.all([
       Post.find(filter)
-        .populate("author", "name avatar")
+        .populate("author", "name avatar reputation")
         .sort(effectiveSort)
         .skip(skip)
         .limit(limit),
@@ -296,20 +265,16 @@ exports.getPosts = async (req, res) => {
 
     const hasMore = page * limit < total;
 
-    res.json({
-      posts,
-      total,
-      page,
-      hasMore,
-    });
+    res.json({ posts, total, page, hasMore });
   } catch (err) {
     console.error("getPosts error:", err.message);
     res.status(500).json({ message: "Server error" });
   }
 };
 
-// @desc    Get single post by id
-// @route   GET /api/feed/posts/:id
+// ---------------------------------------------------------------------------
+// GET /api/feed/posts/:id
+// ---------------------------------------------------------------------------
 exports.getPost = async (req, res) => {
   try {
     const userId = req.user.id;
@@ -319,7 +284,10 @@ exports.getPost = async (req, res) => {
       return res.status(404).json({ message: "Post not found" });
     }
 
-    const post = await Post.findById(id).populate("author", "name avatar");
+    const post = await Post.findById(id).populate(
+      "author",
+      "name avatar reputation",
+    );
 
     if (!post) {
       return res.status(404).json({ message: "Post not found" });
@@ -337,8 +305,9 @@ exports.getPost = async (req, res) => {
   }
 };
 
-// @desc    Create new post
-// @route   POST /api/feed/posts
+// ---------------------------------------------------------------------------
+// POST /api/feed/posts
+// ---------------------------------------------------------------------------
 exports.createPost = async (req, res) => {
   try {
     const userId = req.user.id;
@@ -353,7 +322,7 @@ exports.createPost = async (req, res) => {
     const created = await Post.create(payload);
     const post = await Post.findById(created._id).populate(
       "author",
-      "name avatar",
+      "name avatar reputation",
     );
 
     res.status(201).json(post);
@@ -366,8 +335,9 @@ exports.createPost = async (req, res) => {
   }
 };
 
-// @desc    Update an existing post
-// @route   PATCH /api/feed/posts/:id
+// ---------------------------------------------------------------------------
+// PATCH /api/feed/posts/:id
+// ---------------------------------------------------------------------------
 exports.updatePost = async (req, res) => {
   try {
     const userId = req.user.id;
@@ -378,9 +348,7 @@ exports.updatePost = async (req, res) => {
     }
 
     const post = await Post.findById(id);
-    if (!post) {
-      return res.status(404).json({ message: "Post not found" });
-    }
+    if (!post) return res.status(404).json({ message: "Post not found" });
 
     if (post.author.toString() !== userId) {
       return res
@@ -394,7 +362,7 @@ exports.updatePost = async (req, res) => {
 
     applyUpdatePayload(post, req.body);
     await post.save();
-    await post.populate("author", "name avatar");
+    await post.populate("author", "name avatar reputation");
 
     res.json(post);
   } catch (err) {
@@ -406,8 +374,9 @@ exports.updatePost = async (req, res) => {
   }
 };
 
-// @desc    Delete a post
-// @route   DELETE /api/feed/posts/:id
+// ---------------------------------------------------------------------------
+// DELETE /api/feed/posts/:id
+// ---------------------------------------------------------------------------
 exports.deletePost = async (req, res) => {
   try {
     const userId = req.user.id;
@@ -418,9 +387,7 @@ exports.deletePost = async (req, res) => {
     }
 
     const post = await Post.findById(id);
-    if (!post) {
-      return res.status(404).json({ message: "Post not found" });
-    }
+    if (!post) return res.status(404).json({ message: "Post not found" });
 
     if (post.author.toString() !== userId) {
       return res
@@ -437,144 +404,256 @@ exports.deletePost = async (req, res) => {
   }
 };
 
-// @desc    Toggle a reaction on a post
-// @route   POST /api/feed/posts/:id/react
+// ---------------------------------------------------------------------------
+// POST /api/feed/users/:id/follow
+// Toggle follow / unfollow. Returns { following: Boolean }
+// ---------------------------------------------------------------------------
+exports.followUser = async (req, res) => {
+  try {
+    const targetId = req.params.id;
+    const myId = req.user.id;
+
+    if (targetId === myId) {
+      return res.status(400).json({ message: "You cannot follow yourself" });
+    }
+
+    if (!mongoose.Types.ObjectId.isValid(targetId)) {
+      return res.status(400).json({ message: "Invalid user ID" });
+    }
+
+    const [target, me] = await Promise.all([
+      User.findById(targetId).select("_id name"),
+      User.findById(myId).select("following"),
+    ]);
+
+    if (!target) return res.status(404).json({ message: "User not found" });
+    if (!me) return res.status(404).json({ message: "User not found" });
+
+    const alreadyFollowing = me.following.some(
+      (uid) => uid.toString() === targetId,
+    );
+
+    if (alreadyFollowing) {
+      await User.findByIdAndUpdate(myId, { $pull: { following: targetId } });
+      await User.findByIdAndUpdate(targetId, { $pull: { followers: myId } });
+
+      req.app.get("io").to(`feed:user:${targetId}`).emit("feed:follow", {
+        followerId: myId,
+        following: false,
+      });
+
+      return res.json({ following: false, message: "Unfollowed" });
+    } else {
+      await User.findByIdAndUpdate(myId, {
+        $addToSet: { following: targetId },
+      });
+      await User.findByIdAndUpdate(targetId, {
+        $addToSet: { followers: myId },
+      });
+
+      req.app.get("io").to(`feed:user:${targetId}`).emit("feed:follow", {
+        followerId: myId,
+        following: true,
+      });
+
+      return res.json({ following: true, message: "Followed" });
+    }
+  } catch (err) {
+    console.error("followUser error:", err.message);
+    return res.status(500).json({ message: "Server error" });
+  }
+};
+
+// ---------------------------------------------------------------------------
+// GET /api/feed/users/:id/profile
+// Public profile — user info + stats. Viewable by any authenticated user.
+// ---------------------------------------------------------------------------
+exports.getUserProfile = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const myId = req.user.id;
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ message: "Invalid user ID" });
+    }
+
+    const user = await User.findById(id).select(
+      "name avatar bio statusMessage provider reputation following followers followedTags createdAt",
+    );
+    if (!user) return res.status(404).json({ message: "User not found" });
+
+    const postCount = await Post.countDocuments({
+      author: id,
+      isPrivate: false,
+    });
+
+    const isFollowing = user.followers.some((uid) => uid.toString() === myId);
+
+    const { level, badge } = getLevel(user.reputation);
+
+    return res.json({
+      _id: user._id,
+      name: user.name,
+      avatar: user.avatar,
+      bio: user.bio,
+      statusMessage: user.statusMessage,
+      provider: user.provider,
+      reputation: user.reputation,
+      level,
+      badge,
+      followingCount: user.following.length,
+      followersCount: user.followers.length,
+      followedTags: user.followedTags,
+      postCount,
+      isFollowing,
+      isOwnProfile: id === myId,
+      createdAt: user.createdAt,
+    });
+  } catch (err) {
+    console.error("getUserProfile error:", err.message);
+    return res.status(500).json({ message: "Server error" });
+  }
+};
+
+// ---------------------------------------------------------------------------
+// GET /api/feed/users/:id/posts
+// User's published posts — paginated.
+// ---------------------------------------------------------------------------
+exports.getUserPosts = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ message: "Invalid user ID" });
+    }
+
+    const user = await User.findById(id).select("_id");
+    if (!user) return res.status(404).json({ message: "User not found" });
+
+    const page = clampInt(req.query.page, 1, 1, 100000);
+    const limit = clampInt(req.query.limit, 20, 1, 50);
+    const skip = (page - 1) * limit;
+
+    const [posts, total] = await Promise.all([
+      Post.find({ author: id, isPrivate: false })
+        .sort({ isPinned: -1, createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .populate("author", "name avatar reputation"),
+      Post.countDocuments({ author: id, isPrivate: false }),
+    ]);
+
+    const hasMore = skip + posts.length < total;
+
+    return res.json({ posts, hasMore, total, page });
+  } catch (err) {
+    console.error("getUserPosts error:", err.message);
+    return res.status(500).json({ message: "Server error" });
+  }
+};
+
+// ---------------------------------------------------------------------------
+// GET /api/feed/users/top-contributors
+// Leaderboard — top 10 users by reputation.
+// ---------------------------------------------------------------------------
+exports.getTopContributors = async (req, res) => {
+  try {
+    const users = await User.find({ reputation: { $gt: 0 } })
+      .sort({ reputation: -1 })
+      .limit(10)
+      .select("name avatar reputation followers");
+
+    const leaderboard = users.map((u) => {
+      const { level, badge } = getLevel(u.reputation);
+      return {
+        _id: u._id,
+        name: u.name,
+        avatar: u.avatar,
+        reputation: u.reputation,
+        level,
+        badge,
+        followersCount: u.followers.length,
+      };
+    });
+
+    return res.json(leaderboard);
+  } catch (err) {
+    console.error("getTopContributors error:", err.message);
+    return res.status(500).json({ message: "Server error" });
+  }
+};
+
+// ---------------------------------------------------------------------------
+// POST /api/feed/posts/:id/react
+// Toggle emoji reaction on a post.
+// ---------------------------------------------------------------------------
 exports.reactToPost = async (req, res) => {
   try {
     const userId = req.user.id;
     const { id } = req.params;
     const { emoji } = req.body;
 
-    // Use 20 chars to accommodate multi-codepoint emoji sequences (family, flag, etc.)
-    if (!emoji || typeof emoji !== "string" || emoji.length > 20) {
-      return res.status(400).json({ message: "emoji is required" });
+    if (!emoji || !emoji.trim()) {
+      return res.status(400).json({ message: "Emoji is required" });
     }
-
     if (!mongoose.Types.ObjectId.isValid(id)) {
       return res.status(404).json({ message: "Post not found" });
     }
 
-    // Fetch post to determine add vs remove and get author id
     const post = await Post.findById(id);
-    if (!post) {
-      return res.status(404).json({ message: "Post not found" });
-    }
+    if (!post) return res.status(404).json({ message: "Post not found" });
 
-    const authorId = post.author.toString();
-    const isSelf = authorId === userId;
+    const reactions = post.reactions || new Map();
+    const currentUsers = reactions.get(emoji) || [];
+    const alreadyReacted = currentUsers.map(String).includes(userId);
 
-    // Check current reaction state before any writes
-    const existingUsers = (post.reactions?.get(emoji) ?? []).map(String);
-    const isAdding = !existingUsers.includes(userId);
-
-    let updatedPost;
-
-    if (isAdding) {
-      // Add reaction atomically
-      updatedPost = await Post.findByIdAndUpdate(
-        id,
-        {
-          $addToSet: { [`reactions.${emoji}`]: userId },
-          $inc: { reactionCount: 1 },
-        },
-        { returnDocument: "after" },
-      );
-
-      // Bonus guard — only the first writer whose filter matches wins.
-      // MongoDB document-level atomicity ensures only one concurrent caller
-      // can set bonus5Reactions: true (the second will find it already true).
-      const bonusResult = await Post.findOneAndUpdate(
-        { _id: id, bonus5Reactions: false, reactionCount: { $gte: 5 } },
-        { $set: { bonus5Reactions: true } },
-      );
-
-      if (!isSelf) {
-        // +2 for the reaction; +5 if bonus was just triggered
-        const bonusDelta = bonusResult ? 5 : 0;
-        const delta = 2 + bonusDelta;
-        await User.findByIdAndUpdate(authorId, { $inc: { reputation: delta } });
-      }
+    if (alreadyReacted) {
+      const updated = currentUsers.filter((uid) => uid.toString() !== userId);
+      if (updated.length === 0) reactions.delete(emoji);
+      else reactions.set(emoji, updated);
     } else {
-      // Remove reaction.
-      // NOTE: $inc bypasses Mongoose min:0, so we compute the new count
-      // from the pre-read post value and use $set to guarantee no negatives.
-      // Bonuses already awarded are permanent — un-reacting does NOT reverse
-      // the one-time +5 milestone bonus (intentional design decision).
-      // Edge case: if bonus5Reactions was set to true via self-reacts only
-      // (no +5 awarded), a later non-author reaction will NOT re-trigger the bonus.
-      // This is also intentional — the bonus requires another user to push to 5+.
-      const newCount = Math.max(0, (post.reactionCount ?? 0) - 1);
-      updatedPost = await Post.findByIdAndUpdate(
-        id,
-        {
-          $pull: { [`reactions.${emoji}`]: userId },
-          $set: { reactionCount: newCount },
-        },
-        { returnDocument: "after" },
-      );
-
-      if (!isSelf) {
-        // Decrement only if reputation >= 2 to stay floored at 0;
-        // if it was 0 or 1, clamp to 0 explicitly.
-        const floored = await User.findOneAndUpdate(
-          { _id: authorId, reputation: { $gte: 2 } },
-          { $inc: { reputation: -2 } },
-        );
-        if (!floored) {
-          await User.findByIdAndUpdate(authorId, { $set: { reputation: 0 } });
-        }
-      }
+      reactions.set(emoji, [...currentUsers, userId]);
     }
 
-    // Guard against null in case the post was deleted between reads
-    if (!updatedPost) {
-      return res.status(404).json({ message: "Post not found" });
+    post.reactions = reactions;
+
+    let total = 0;
+    for (const users of post.reactions.values()) total += users.length;
+    post.reactionCount = total;
+
+    await post.save();
+
+    const reactionsObj = {};
+    for (const [key, val] of post.reactions.entries()) {
+      reactionsObj[key] = val;
     }
 
-    // Build plain reactions object from Map
-    const reactions = {};
-    if (updatedPost.reactions) {
-      for (const [key, value] of updatedPost.reactions.entries()) {
-        reactions[key] = value.map(String);
-      }
-    }
-
-    // Broadcast to all clients viewing this post
-    const io = req.app.get("io");
-    io.to(`feed:post:${id}`).emit("feed:post:reacted", {
+    req.app.get("io").to(`feed:post:${id}`).emit("feed:post:reacted", {
       postId: id,
-      reactions,
-      reactionCount: updatedPost.reactionCount,
+      reactions: reactionsObj,
+      reactionCount: post.reactionCount,
     });
 
-    res.json({ reactions, reactionCount: updatedPost.reactionCount });
-  } catch (err) {
-    console.error("reactToPost error:", err.message);
-    res.status(500).json({ message: "Server error" });
-  }
-};
-
-// @desc    Get current user's feed stats (reputation, level, postCount)
-// @route   GET /api/feed/me/stats
-exports.getMyStats = async (req, res) => {
-  try {
-    const userId = req.user.id;
-
-    const [user, postCount] = await Promise.all([
-      User.findById(userId, "reputation"),
-      Post.countDocuments({ author: userId, isPrivate: false }),
-    ]);
-
-    if (!user) {
-      return res.status(404).json({ message: "User not found" });
+    // Reputation update is non-fatal — wrapped separately
+    if (post.author.toString() !== userId) {
+      try {
+        await User.findByIdAndUpdate(post.author, {
+          $inc: { reputation: alreadyReacted ? -2 : 2 },
+        });
+      } catch (repErr) {
+        console.warn(
+          "reactToPost: reputation update failed (non-fatal):",
+          repErr.message,
+        );
+      }
     }
 
-    const reputation = user.reputation ?? 0;
-    const { level, badge } = getLevel(reputation);
-
-    res.json({ reputation, level, badge, postCount });
+    return res.json({
+      reactions: reactionsObj,
+      reactionCount: post.reactionCount,
+    });
   } catch (err) {
-    console.error("getMyStats error:", err.message);
-    res.status(500).json({ message: "Server error" });
+    console.error("reactToPost error:", err.message);
+    return res.status(500).json({ message: "Server error" });
   }
 };
