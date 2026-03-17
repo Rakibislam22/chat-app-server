@@ -909,8 +909,9 @@ exports.deleteComment = async (req, res) => {
     const toDelete = await Comment.countDocuments(deleteFilter);
     await Comment.deleteMany(deleteFilter);
 
-    // Recompute count from source-of-truth comments collection to avoid drift and
-    // avoid Mongo update-pipeline compatibility issues.
+    const deletedCount = Math.max(1, toDelete);
+
+    // Recompute from source of truth to avoid drift and pipeline compatibility issues.
     const remainingComments = await Comment.countDocuments({ post: comment.post });
     const updatedPost = await Post.findByIdAndUpdate(
       comment.post,
@@ -930,7 +931,7 @@ exports.deleteComment = async (req, res) => {
 
     return res.json({
       message: "Deleted",
-      deletedCount: Math.max(1, toDelete),
+      deletedCount,
       commentsCount: updatedPost?.commentsCount ?? 0,
     });
   } catch (err) {
