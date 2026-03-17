@@ -51,7 +51,6 @@ app.use("/auth", authRoutes);
 app.use("/api/chat", chatRoutes);
 app.use("/api/chat", groupRoutes);
 app.use("/api/reset", resetRoutes);
-app.use("/api/reset", require("./src/routes/reset.routes"));
 
 // Workspace Routes
 app.use("/api/workspaces", workspaceRoutes);

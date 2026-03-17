@@ -104,18 +104,26 @@ const normalizeScreenshots = (screenshots) => {
     .slice(0, 10);
 };
 
+const SAFE_URL_RE = /^https?:\/\//i;
+
+const sanitizeUrl = (raw) => {
+  if (!raw) return null;
+  const s = String(raw).trim();
+  return SAFE_URL_RE.test(s) ? s : null;
+};
+
 const normalizeLinkPreview = (linkPreview) => {
   if (!linkPreview || typeof linkPreview !== "object") {
     return { url: null, title: null, description: null, image: null };
   }
 
   return {
-    url: linkPreview.url ? String(linkPreview.url).trim() : null,
+    url: sanitizeUrl(linkPreview.url),
     title: linkPreview.title ? String(linkPreview.title).trim() : null,
     description: linkPreview.description
       ? String(linkPreview.description).trim()
       : null,
-    image: linkPreview.image ? String(linkPreview.image).trim() : null,
+    image: sanitizeUrl(linkPreview.image),
   };
 };
 
@@ -689,13 +697,13 @@ exports.reactToPost = async (req, res) => {
     // Reputation update is non-fatal — wrapped separately
     if (post.author.toString() !== userId) {
       try {
-        await User.findByIdAndUpdate(post.author, {
-          $inc: {
-            reputation: alreadyReacted
-              ? -FEED_REPUTATION.POST_REACTION
-              : FEED_REPUTATION.POST_REACTION,
-          },
-        });
+        const repDelta = alreadyReacted
+          ? -FEED_REPUTATION.POST_REACTION
+          : FEED_REPUTATION.POST_REACTION;
+        // Aggregation-pipeline update ensures reputation never falls below 0
+        await User.findByIdAndUpdate(post.author, [
+          { $set: { reputation: { $max: [0, { $add: ["$reputation", repDelta] }] } } },
+        ]);
       } catch (repErr) {
         console.warn(
           "reactToPost: reputation update failed (non-fatal):",
@@ -901,9 +909,10 @@ exports.deleteComment = async (req, res) => {
     const toDelete = await Comment.countDocuments(deleteFilter);
     await Comment.deleteMany(deleteFilter);
 
-    await Post.findByIdAndUpdate(comment.post, {
-      $inc: { commentsCount: -Math.max(1, toDelete) },
-    });
+    // Use aggregation-pipeline update to floor commentsCount at 0
+    await Post.findByIdAndUpdate(comment.post, [
+      { $set: { commentsCount: { $max: [0, { $subtract: ["$commentsCount", Math.max(1, toDelete)] }] } } },
+    ]);
 
     const io = getIo(req);
     io.to(`feed:post:${comment.post.toString()}`).emit("feed:comment:deleted", {
@@ -958,13 +967,20 @@ exports.reactToComment = async (req, res) => {
     await comment.save();
 
     if (comment.author.toString() !== userId) {
-      await User.findByIdAndUpdate(comment.author, {
-        $inc: {
-          reputation: alreadyReacted
-            ? -FEED_REPUTATION.COMMENT_REACTION
-            : FEED_REPUTATION.COMMENT_REACTION,
-        },
-      });
+      try {
+        const repDelta = alreadyReacted
+          ? -FEED_REPUTATION.COMMENT_REACTION
+          : FEED_REPUTATION.COMMENT_REACTION;
+        // Aggregation-pipeline update ensures reputation never falls below 0
+        await User.findByIdAndUpdate(comment.author, [
+          { $set: { reputation: { $max: [0, { $add: ["$reputation", repDelta] }] } } },
+        ]);
+      } catch (repErr) {
+        console.warn(
+          "reactToComment: reputation update failed (non-fatal):",
+          repErr.message,
+        );
+      }
     }
 
     const reactionsObj = toPlainReactions(comment.reactions);
@@ -1028,9 +1044,9 @@ exports.toggleAcceptedAnswer = async (req, res) => {
       await Promise.all([
         comment.save(),
         post.save(),
-        User.findByIdAndUpdate(comment.author, {
-          $inc: { reputation: -FEED_REPUTATION.ACCEPTED_ANSWER },
-        }),
+        User.findByIdAndUpdate(comment.author, [
+          { $set: { reputation: { $max: [0, { $subtract: ["$reputation", FEED_REPUTATION.ACCEPTED_ANSWER] }] } } },
+        ]),
       ]);
 
       getIo(req).to(`feed:post:${postId}`).emit("feed:answer:accepted", {
@@ -1050,9 +1066,9 @@ exports.toggleAcceptedAnswer = async (req, res) => {
       updates.push(
         Comment.findById(previouslyAcceptedId).select("author").then((prev) => {
           if (!prev) return null;
-          return User.findByIdAndUpdate(prev.author, {
-            $inc: { reputation: -FEED_REPUTATION.ACCEPTED_ANSWER },
-          });
+          return User.findByIdAndUpdate(prev.author, [
+            { $set: { reputation: { $max: [0, { $subtract: ["$reputation", FEED_REPUTATION.ACCEPTED_ANSWER] }] } } },
+          ]);
         }),
       );
     }
@@ -1064,9 +1080,9 @@ exports.toggleAcceptedAnswer = async (req, res) => {
     updates.push(comment.save());
     updates.push(post.save());
     updates.push(
-      User.findByIdAndUpdate(comment.author, {
-        $inc: { reputation: FEED_REPUTATION.ACCEPTED_ANSWER },
-      }),
+      User.findByIdAndUpdate(comment.author, [
+        { $set: { reputation: { $add: ["$reputation", FEED_REPUTATION.ACCEPTED_ANSWER] } } },
+      ]),
     );
 
     await Promise.all(updates);
