@@ -178,16 +178,11 @@ exports.createPoll = async (req, res) => {
 // ──────────────────────────────────────────────────────────
 // Vote on Poll
 // ──────────────────────────────────────────────────────────
-
 exports.votePoll = async (req, res) => {
   try {
     const userId = req.user.id;
     const { messageId } = req.params;
     const { optionId } = req.body;
-
-    // ──────────────────────────────────────────────────────────
-    // Load message
-    // ──────────────────────────────────────────────────────────
 
     const message = await Message.findById(messageId);
 
@@ -199,17 +194,9 @@ exports.votePoll = async (req, res) => {
       return res.status(400).json({ message: "This is not a poll message" });
     }
 
-    // ──────────────────────────────────────────────────────────
-    // Check if poll expired
-    // ──────────────────────────────────────────────────────────
-
     if (message.poll.expiresAt && new Date() > message.poll.expiresAt) {
       return res.status(400).json({ message: "This poll has expired" });
     }
-
-    // ──────────────────────────────────────────────────────────
-    // ✅ Load conversation and verify membership
-    // ──────────────────────────────────────────────────────────
 
     const conversation = await Conversation.findById(message.conversationId);
 
@@ -227,52 +214,41 @@ exports.votePoll = async (req, res) => {
       });
     }
 
-    // ──────────────────────────────────────────────────────────
-    // Find the option
-    // ──────────────────────────────────────────────────────────
-
     const option = message.poll.options.find((opt) => opt.id === optionId);
 
     if (!option) {
       return res.status(404).json({ message: "Option not found" });
     }
 
-    // ──────────────────────────────────────────────────────────
-    // Toggle vote
-    // ──────────────────────────────────────────────────────────
-
     const hasVotedThisOption = option.votes.some(
       (v) => v.toString() === userId,
     );
 
     if (hasVotedThisOption) {
-      // Remove vote (toggle)
       option.votes = option.votes.filter((v) => v.toString() !== userId);
     } else {
-      // New vote
       if (!message.poll.allowMultiple) {
-        // Remove votes from other options (single choice)
         message.poll.options.forEach((opt) => {
-          opt.votes = opt.votes.filter((v) => v.toString() !== userId);
+          opt.votes = opt.votes.filter(
+            (v) => (v._id || v).toString() !== userId,
+          );
         });
       }
       option.votes.push(userId);
     }
 
-    // ──────────────────────────────────────────────────────────
-    // Save (mark modified for nested updates)
-    // ──────────────────────────────────────────────────────────
-
     message.markModified("poll");
     await message.save();
 
-    // Reload with populated data
+    // ✅✅✅ FIXED: Correct populate syntax for nested arrays
     await message.populate("sender", "name avatar");
-    await message.populate("poll.options.votes", "name avatar");
-
-    // ──────────────────────────────────────────────────────────
-    // Socket broadcast
-    // ──────────────────────────────────────────────────────────
+    await message.populate({
+      path: "poll.options",
+      populate: {
+        path: "votes",
+        select: "name avatar",
+      },
+    });
 
     const io = req.app.get("io");
     if (io) {
@@ -291,7 +267,6 @@ exports.votePoll = async (req, res) => {
     res.status(500).json({ message: "Server error", error: err.message });
   }
 };
-
 // ──────────────────────────────────────────────────────────
 // Get Poll Results (with access control)
 // ──────────────────────────────────────────────────────────
@@ -301,13 +276,16 @@ exports.getPollResults = async (req, res) => {
     const { messageId } = req.params;
     const userId = req.user.id;
 
-    // ──────────────────────────────────────────────────────────
-    // Load message
-    // ──────────────────────────────────────────────────────────
-
+    // ✅✅✅ FIXED: Correct populate for nested arrays
     const message = await Message.findById(messageId)
       .populate("sender", "name avatar")
-      .populate("poll.options.votes", "name avatar");
+      .populate({
+        path: "poll.options",
+        populate: {
+          path: "votes",
+          select: "name avatar",
+        },
+      });
 
     if (!message) {
       return res.status(404).json({ message: "Message not found" });
@@ -316,10 +294,6 @@ exports.getPollResults = async (req, res) => {
     if (!message.poll) {
       return res.status(400).json({ message: "This is not a poll message" });
     }
-
-    // ──────────────────────────────────────────────────────────
-    // ✅ Verify user is a member of the conversation
-    // ──────────────────────────────────────────────────────────
 
     const conversation = await Conversation.findById(message.conversationId);
 
@@ -336,10 +310,6 @@ exports.getPollResults = async (req, res) => {
         message: "You are not a member of this conversation",
       });
     }
-
-    // ──────────────────────────────────────────────────────────
-    // Return results
-    // ──────────────────────────────────────────────────────────
 
     res.json({
       poll: message.poll,
