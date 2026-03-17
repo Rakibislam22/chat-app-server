@@ -16,6 +16,7 @@ const workspaceRoutes = require("./src/routes/workspace.routes");
 const moduleRoutes = require("./src/routes/module.routes");
 const feedRoutes = require("./src/routes/feed.routes");
 const feedUserRoutes = require("./src/routes/feed.users.routes");
+const uploadRoutes = require("./src/routes/upload.routes");
 const mongoose = require("mongoose");
 
 const port = process.env.PORT || 3000;
@@ -64,6 +65,9 @@ app.use("/api/feed/users", feedUserRoutes);
 
 // Scheduled Message Routes
 app.use("/api/messages", scheduleRoutes);
+
+// Upload (R2 presign)
+app.use("/api/upload", uploadRoutes);
 
 // Health check for Deployment (UptimeRobot/Heartbeat)
 app.get("/health", (req, res) => {
