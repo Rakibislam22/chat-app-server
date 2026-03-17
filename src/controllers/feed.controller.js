@@ -909,18 +909,30 @@ exports.deleteComment = async (req, res) => {
     const toDelete = await Comment.countDocuments(deleteFilter);
     await Comment.deleteMany(deleteFilter);
 
-    // Use aggregation-pipeline update to floor commentsCount at 0
-    await Post.findByIdAndUpdate(comment.post, [
-      { $set: { commentsCount: { $max: [0, { $subtract: ["$commentsCount", Math.max(1, toDelete)] }] } } },
-    ]);
+    // Recompute count from source-of-truth comments collection to avoid drift and
+    // avoid Mongo update-pipeline compatibility issues.
+    const remainingComments = await Comment.countDocuments({ post: comment.post });
+    const updatedPost = await Post.findByIdAndUpdate(
+      comment.post,
+      { $set: { commentsCount: Math.max(0, remainingComments) } },
+      { new: true },
+    ).select("commentsCount");
 
-    const io = getIo(req);
-    io.to(`feed:post:${comment.post.toString()}`).emit("feed:comment:deleted", {
-      commentId: id,
-      postId: comment.post,
+    try {
+      const io = getIo(req);
+      io.to(`feed:post:${comment.post.toString()}`).emit("feed:comment:deleted", {
+        commentId: id,
+        postId: comment.post,
+      });
+    } catch (socketErr) {
+      console.warn("deleteComment socket emit failed (non-fatal):", socketErr.message);
+    }
+
+    return res.json({
+      message: "Deleted",
+      deletedCount: Math.max(1, toDelete),
+      commentsCount: updatedPost?.commentsCount ?? 0,
     });
-
-    return res.json({ message: "Deleted" });
   } catch (err) {
     console.error("deleteComment error:", err.message);
     return res.status(500).json({ message: "Server error" });
