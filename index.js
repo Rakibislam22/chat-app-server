@@ -9,12 +9,17 @@ const authRoutes = require("./src/routes/auth.routes");
 const chatRoutes = require("./src/routes/chat.routes");
 const groupRoutes = require("./src/routes/group.routes");
 const resetRoutes = require("./src/routes/reset.routes");
+const uploadRoutes = require("./src/routes/upload.routes"); // ← ADD THIS
 const passport = require("./src/config/passport");
 const { connectRedis, getIsRedisConnected } = require("./src/config/redis");
 const scheduleRoutes = require("./src/routes/schedule.routes");
 const workspaceRoutes = require("./src/routes/workspace.routes");
 const moduleRoutes = require("./src/routes/module.routes");
 const feedApiRoutes = require("./src/routes/feed.api.routes");
+const feedRoutes = require("./src/routes/feed.routes");
+const pinRoutes = require("./src/routes/pin.routes");
+const pollRoutes = require("./src/routes/poll.routes");
+const feedUserRoutes = require("./src/routes/feed.users.routes");
 const mongoose = require("mongoose");
 
 const port = process.env.PORT || 3000;
@@ -44,13 +49,17 @@ app.use(
     credentials: true,
   }),
 );
-app.use(express.json());
+app.use(express.json({ limit: "10mb" }));
+app.use(express.urlencoded({ limit: "10mb", extended: true }));
 
 // Routes
+app.use("/api/upload", uploadRoutes); // ← Upload routes
 app.use("/auth", authRoutes);
 app.use("/api/chat", chatRoutes);
 app.use("/api/chat", groupRoutes);
 app.use("/api/reset", resetRoutes);
+app.use("/api/chat/conversations/:id", pinRoutes); // Pin routes nested under conversations
+app.use("/api/chat", pollRoutes); 
 
 // Workspace Routes
 app.use("/api/workspaces", workspaceRoutes);
