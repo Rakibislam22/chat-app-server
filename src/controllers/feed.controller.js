@@ -58,6 +58,25 @@ const clampInt = (value, fallback, min, max) => {
   return Math.max(min, Math.min(max, parsed));
 };
 
+// Helper to check post access (privacy and ownership)
+const checkPostAccess = async (postId, userId) => {
+  if (!mongoose.Types.ObjectId.isValid(postId)) {
+    return { error: { status: 400, message: "Invalid post ID" } };
+  }
+
+  const post = await Post.findById(postId).select("_id author isPrivate");
+  if (!post) {
+    return { error: { status: 404, message: "Post not found" } };
+  }
+
+  const isOwner = post.author?.toString?.() === userId;
+  if (post.isPrivate && !isOwner) {
+    return { error: { status: 403, message: "Not authorized to access this post" } };
+  }
+
+  return { post };
+};
+
 const normalizeTags = (tags) => {
   if (!tags) return [];
 
@@ -142,7 +161,7 @@ const parsePollDuration = (duration) => {
   return null;
 };
 
-const normalizePoll = (poll) => {
+const normalizePoll = (poll, existingPoll = null) => {
   if (!poll || typeof poll !== "object") {
     return {
       question: null,
@@ -160,10 +179,16 @@ const normalizePoll = (poll) => {
         if (typeof option === "string") {
           return { text: option.trim(), votes: [] };
         }
-        return {
-          text: String(option?.text || "").trim(),
-          votes: Array.isArray(option?.votes) ? option.votes : [],
-        };
+        const text = String(option?.text || "").trim();
+        // Preserve votes from existingPoll if available, otherwise initialize to []
+        let votes = [];
+        if (existingPoll && Array.isArray(existingPoll.options)) {
+          const existing = existingPoll.options.find((opt) => opt.text === text);
+          if (existing && Array.isArray(existing.votes)) {
+            votes = existing.votes;
+          }
+        }
+        return { text, votes };
       })
       .filter((option) => option.text)
       .slice(0, 6)
@@ -171,9 +196,14 @@ const normalizePoll = (poll) => {
 
   const duration = poll.duration ? String(poll.duration).trim() : "7 Days";
   const durationDays = parsePollDuration(duration);
-  const endsAt = durationDays
-    ? new Date(Date.now() + durationDays * 24 * 60 * 60 * 1000)
-    : null;
+
+  // Use existing endsAt if updating, only compute for new polls
+  let endsAt = null;
+  if (existingPoll && existingPoll.endsAt) {
+    endsAt = existingPoll.endsAt;
+  } else if (durationDays) {
+    endsAt = new Date(Date.now() + durationDays * 24 * 60 * 60 * 1000);
+  }
 
   return {
     question: poll.question ? String(poll.question).trim() : null,
@@ -371,7 +401,10 @@ exports.createPost = async (req, res) => {
     );
 
     const io = getIo(req);
-    io.emit("feed:post:created", { post });
+    // Only emit to global feed if post is public
+    if (!post.isPrivate) {
+      io.emit("feed:post:created", { post });
+    }
     io.to(`feed:user:${userId}`).emit("feed:user:post-created", {
       authorId: userId,
       postId: post._id,
@@ -654,14 +687,18 @@ exports.reactToPost = async (req, res) => {
     if (!emoji || !emoji.trim()) {
       return res.status(400).json({ message: "Emoji is required" });
     }
-    if (!mongoose.Types.ObjectId.isValid(id)) {
-      return res.status(404).json({ message: "Post not found" });
-    }
 
-    const post = await Post.findById(id);
+    // Check post access (privacy/ownership)
+    const access = await checkPostAccess(id, userId);
+    if (access.error) {
+      return res.status(access.error.status).json({ message: access.error.message });
+    }
+    const post = access.post;
+    // Reload post with full data for reactions
+    const fullPost = await Post.findById(id);
     if (!post) return res.status(404).json({ message: "Post not found" });
 
-    const reactions = post.reactions || new Map();
+    const reactions = fullPost.reactions || new Map();
     const currentUsers = reactions.get(emoji) || [];
     const alreadyReacted = currentUsers.map(String).includes(userId);
 
@@ -673,35 +710,35 @@ exports.reactToPost = async (req, res) => {
       reactions.set(emoji, [...currentUsers, userId]);
     }
 
-    post.reactions = reactions;
+    fullPost.reactions = reactions;
 
     let total = 0;
-    for (const users of post.reactions.values()) total += users.length;
-    post.reactionCount = total;
+    for (const users of fullPost.reactions.values()) total += users.length;
+    fullPost.reactionCount = total;
 
-    await post.save();
+    await fullPost.save();
 
-    const reactionsObj = toPlainReactions(post.reactions);
+    const reactionsObj = toPlainReactions(fullPost.reactions);
 
     const io = getIo(req);
     io.to(`feed:post:${id}`).emit("feed:post:reacted", {
       postId: id,
       reactions: reactionsObj,
-      reactionCount: post.reactionCount,
+      reactionCount: fullPost.reactionCount,
     });
     io.emit("feed:post:reaction-updated", {
       postId: id,
-      reactionCount: post.reactionCount,
+      reactionCount: fullPost.reactionCount,
     });
 
     // Reputation update is non-fatal — wrapped separately
-    if (post.author.toString() !== userId) {
+    if (fullPost.author.toString() !== userId) {
       try {
         const repDelta = alreadyReacted
           ? -FEED_REPUTATION.POST_REACTION
           : FEED_REPUTATION.POST_REACTION;
         // Aggregation-pipeline update ensures reputation never falls below 0
-        await User.findByIdAndUpdate(post.author, [
+        await User.findByIdAndUpdate(fullPost.author, [
           { $set: { reputation: { $max: [0, { $add: ["$reputation", repDelta] }] } } },
         ]);
       } catch (repErr) {
@@ -714,7 +751,7 @@ exports.reactToPost = async (req, res) => {
 
     return res.json({
       reactions: reactionsObj,
-      reactionCount: post.reactionCount,
+      reactionCount: fullPost.reactionCount,
     });
   } catch (err) {
     console.error("reactToPost error:", err.message);
@@ -728,9 +765,13 @@ exports.reactToPost = async (req, res) => {
 // ---------------------------------------------------------------------------
 exports.getComments = async (req, res) => {
   try {
+    const userId = req.user?.id || null;
     const postId = req.query.postId;
-    if (!mongoose.Types.ObjectId.isValid(postId)) {
-      return res.status(400).json({ message: "Invalid post ID" });
+
+    // Check post access (privacy/ownership)
+    const access = await checkPostAccess(postId, userId);
+    if (access.error) {
+      return res.status(access.error.status).json({ message: access.error.message });
     }
 
     const page = clampInt(req.query.page, 1, 1, 100000);
@@ -795,10 +836,18 @@ exports.createComment = async (req, res) => {
       return res.status(400).json({ message: "Comment content is required" });
     }
 
-    const post = await Post.findById(postId).select(
+    // Check post access (privacy/ownership)
+    const access = await checkPostAccess(postId, userId);
+    if (access.error) {
+      return res.status(access.error.status).json({ message: access.error.message });
+    }
+    const post = access.post;
+
+    // Reload post with more fields if needed
+    const fullPost = await Post.findById(postId).select(
       "_id author type questionBonusAwarded isPrivate",
     );
-    if (!post) return res.status(404).json({ message: "Post not found" });
+    if (!fullPost) return res.status(404).json({ message: "Post not found" });
 
     let parentComment = null;
     if (parentCommentId) {
@@ -825,18 +874,19 @@ exports.createComment = async (req, res) => {
 
     await Post.findByIdAndUpdate(postId, { $inc: { commentsCount: 1 } });
 
-    // First answer bonus for question author.
-    if (
-      post.type === "question" &&
-      !post.questionBonusAwarded &&
-      post.author.toString() !== userId
-    ) {
-      await Promise.all([
-        Post.findByIdAndUpdate(postId, { questionBonusAwarded: true }),
-        User.findByIdAndUpdate(post.author, {
+    // First answer bonus for question author (conditional update prevents race)
+    if (fullPost.type === "question" && fullPost.author.toString() !== userId) {
+      const updated = await Post.findOneAndUpdate(
+        { _id: postId, type: "question", questionBonusAwarded: false },
+        { $set: { questionBonusAwarded: true } },
+        { new: false },
+      );
+      // Only increment reputation if the conditional update succeeded
+      if (updated) {
+        await User.findByIdAndUpdate(fullPost.author, {
           $inc: { reputation: FEED_REPUTATION.QUESTION_BONUS },
-        }),
-      ]);
+        });
+      }
     }
 
     const comment = await Comment.findById(created._id).populate(
@@ -905,9 +955,35 @@ exports.deleteComment = async (req, res) => {
       return res.status(403).json({ message: "Not authorized" });
     }
 
+    // Load post to check/unwind acceptedComment state
+    const post = await Post.findById(comment.post).select(
+      "acceptedComment status author"
+    );
+    if (!post) return res.status(404).json({ message: "Post not found" });
+
+    // Check if deleting comment is the accepted answer and unwind it
     const deleteFilter = { $or: [{ _id: id }, { parentComment: id }] };
-    const toDelete = await Comment.countDocuments(deleteFilter);
-    await Comment.deleteMany(deleteFilter);
+    const allToDelete = await Comment.find(deleteFilter).select("_id author isAccepted");
+    const deleteIds = new Set(allToDelete.map((c) => c._id.toString()));
+    const isAcceptedBeingDeleted = allToDelete.some((c) => String(c._id) === String(post.acceptedComment));
+
+    if (isAcceptedBeingDeleted && post.acceptedComment) {
+      // Unwind accepted answer state
+      const acceptedAuthor = await Comment.findById(post.acceptedComment).select("author");
+      if (acceptedAuthor) {
+        await User.findByIdAndUpdate(acceptedAuthor.author, {
+          $inc: { reputation: -FEED_REPUTATION.ACCEPTED_ANSWER },
+        });
+      }
+      await Post.findByIdAndUpdate(post._id, {
+        acceptedComment: null,
+        status: "open",
+      });
+    }
+
+    const deleteFilter2 = { $or: [{ _id: id }, { parentComment: id }] };
+    const toDelete = await Comment.countDocuments(deleteFilter2);
+    await Comment.deleteMany(deleteFilter2);
 
     const deletedCount = Math.max(1, toDelete);
 
@@ -959,6 +1035,12 @@ exports.reactToComment = async (req, res) => {
 
     const comment = await Comment.findById(id);
     if (!comment) return res.status(404).json({ message: "Comment not found" });
+
+    // Check post access (privacy/ownership) before allowing reaction
+    const access = await checkPostAccess(comment.post, userId);
+    if (access.error) {
+      return res.status(access.error.status).json({ message: access.error.message });
+    }
 
     const reactions = comment.reactions || new Map();
     const currentUsers = reactions.get(emoji) || [];
@@ -1029,84 +1111,82 @@ exports.toggleAcceptedAnswer = async (req, res) => {
       return res.status(400).json({ message: "Invalid ID" });
     }
 
-    const [post, comment] = await Promise.all([
-      Post.findById(postId),
-      Comment.findById(commentId),
-    ]);
+    // Use transaction for atomic updates
+    const session = await Post.startSession();
+    session.startTransaction();
 
-    if (!post || !comment || comment.post.toString() !== postId) {
-      return res.status(404).json({ message: "Post or comment not found" });
-    }
-    if (post.type !== "question") {
-      return res.status(400).json({ message: "Accepted answers are only for questions" });
-    }
-    if (post.author.toString() !== userId) {
-      return res.status(403).json({ message: "Only question author can accept answers" });
-    }
+    try {
+      const post = await Post.findById(postId).session(session);
+      const comment = await Comment.findById(commentId).session(session);
 
-    const previouslyAcceptedId = post.acceptedComment
-      ? post.acceptedComment.toString()
-      : null;
+      if (!post || !comment || comment.post.toString() !== postId) {
+        await session.abortTransaction();
+        return res.status(404).json({ message: "Post or comment not found" });
+      }
+      if (post.type !== "question") {
+        await session.abortTransaction();
+        return res.status(400).json({ message: "Accepted answers are only for questions" });
+      }
+      if (post.author.toString() !== userId) {
+        await session.abortTransaction();
+        return res.status(403).json({ message: "Only question author can accept answers" });
+      }
 
-    // Toggle off when selecting the currently accepted comment.
-    if (previouslyAcceptedId === commentId) {
-      comment.isAccepted = false;
-      post.acceptedComment = null;
-      post.status = "open";
+      const previouslyAcceptedId = post.acceptedComment ? post.acceptedComment.toString() : null;
 
-      await Promise.all([
-        comment.save(),
-        post.save(),
-        User.findByIdAndUpdate(comment.author, [
+      // Toggle off when selecting the currently accepted comment
+      if (previouslyAcceptedId === commentId) {
+        await Comment.findByIdAndUpdate(commentId, { isAccepted: false }).session(session);
+        await Post.findByIdAndUpdate(postId, { acceptedComment: null, status: "open" }).session(session);
+        await User.findByIdAndUpdate(comment.author, [
           { $set: { reputation: { $max: [0, { $subtract: ["$reputation", FEED_REPUTATION.ACCEPTED_ANSWER] }] } } },
-        ]),
-      ]);
+        ]).session(session);
+
+        await session.commitTransaction();
+        getIo(req).to(`feed:post:${postId}`).emit("feed:answer:accepted", {
+          postId,
+          commentId: null,
+          resolved: false,
+        });
+        return res.json({ acceptedComment: null, status: "open" });
+      }
+
+      // Clear previous accepted answer if exists
+      if (previouslyAcceptedId) {
+        const previousComment = await Comment.findByIdAndUpdate(
+          previouslyAcceptedId,
+          { isAccepted: false },
+          { new: true },
+        ).session(session);
+        if (previousComment) {
+          await User.findByIdAndUpdate(previousComment.author, [
+            { $set: { reputation: { $max: [0, { $subtract: ["$reputation", FEED_REPUTATION.ACCEPTED_ANSWER] }] } } },
+          ]).session(session);
+        }
+      }
+
+      // Set new accepted answer
+      await Comment.findByIdAndUpdate(commentId, { isAccepted: true }).session(session);
+      await Post.findByIdAndUpdate(postId, { acceptedComment: commentId, status: "resolved" }).session(session);
+      await User.findByIdAndUpdate(comment.author, [
+        { $set: { reputation: { $add: ["$reputation", FEED_REPUTATION.ACCEPTED_ANSWER] } } },
+      ]).session(session);
+
+      await session.commitTransaction();
 
       getIo(req).to(`feed:post:${postId}`).emit("feed:answer:accepted", {
         postId,
-        commentId: null,
-        resolved: false,
+        commentId,
+        resolved: true,
       });
 
-      return res.json({ acceptedComment: null, status: post.status });
+      return res.json({ acceptedComment: commentId, status: "resolved" });
+    } catch (err) {
+      await session.abortTransaction();
+      throw err;
+    } finally {
+      session.endSession();
     }
-
-    const updates = [];
-    if (previouslyAcceptedId) {
-      updates.push(
-        Comment.findByIdAndUpdate(previouslyAcceptedId, { isAccepted: false }),
-      );
-      updates.push(
-        Comment.findById(previouslyAcceptedId).select("author").then((prev) => {
-          if (!prev) return null;
-          return User.findByIdAndUpdate(prev.author, [
-            { $set: { reputation: { $max: [0, { $subtract: ["$reputation", FEED_REPUTATION.ACCEPTED_ANSWER] }] } } },
-          ]);
-        }),
-      );
-    }
-
-    comment.isAccepted = true;
-    post.acceptedComment = comment._id;
-    post.status = "resolved";
-
-    updates.push(comment.save());
-    updates.push(post.save());
-    updates.push(
-      User.findByIdAndUpdate(comment.author, [
-        { $set: { reputation: { $add: ["$reputation", FEED_REPUTATION.ACCEPTED_ANSWER] } } },
-      ]),
-    );
-
-    await Promise.all(updates);
-
-    getIo(req).to(`feed:post:${postId}`).emit("feed:answer:accepted", {
-      postId,
-      commentId,
-      resolved: true,
-    });
-
-    return res.json({ acceptedComment: comment._id, status: post.status });
   } catch (err) {
     console.error("toggleAcceptedAnswer error:", err.message);
     return res.status(500).json({ message: "Server error" });
@@ -1123,14 +1203,18 @@ exports.votePoll = async (req, res) => {
     const { id } = req.params;
     const { optionIndex } = req.body;
 
-    if (!mongoose.Types.ObjectId.isValid(id)) {
-      return res.status(404).json({ message: "Post not found" });
+    // Check post access (privacy/ownership)
+    const access = await checkPostAccess(id, userId);
+    if (access.error) {
+      return res.status(access.error.status).json({ message: access.error.message });
     }
-
-    const post = await Post.findById(id);
-    if (!post || post.type !== "poll") {
+    const post = access.post;
+    // Reload post with poll data
+    const fullPost = await Post.findById(id);
+    if (!fullPost || fullPost.type !== "poll") {
       return res.status(404).json({ message: "Poll not found" });
     }
+    Object.assign(post, fullPost.toObject());
 
     if (!Number.isInteger(optionIndex)) {
       return res.status(400).json({ message: "optionIndex must be an integer" });

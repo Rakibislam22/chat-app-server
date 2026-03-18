@@ -245,7 +245,6 @@ const postSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "Comment",
       default: null,
-      index: true,
     },
 
     questionBonusAwarded: {
@@ -312,8 +311,10 @@ postSchema.index({ createdAt: -1 });
 postSchema.index({ type: 1, createdAt: -1 });
 postSchema.index({ isPrivate: 1, createdAt: -1 });
 postSchema.index({ reactionCount: -1, createdAt: -1 });
-postSchema.index({ tags: 1, createdAt: -1 });
-postSchema.index({ status: 1, createdAt: -1 });
+postSchema.index({ tags: 1 });
+postSchema.index({ status: 1 });
 postSchema.index({ title: "text", content: "text", tags: "text" });
+// Partial index on acceptedComment to exclude nulls
+postSchema.index({ acceptedComment: 1 }, { partialFilterExpression: { acceptedComment: { $ne: null } } });
 
 module.exports = mongoose.model("Post", postSchema);
