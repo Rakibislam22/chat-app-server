@@ -58,13 +58,17 @@ router.post("/voice-message", upload.single("audio"), async (req, res) => {
 router.post("/token", async (req, res) => {
   try {
     const { roomName, callType } = req.body;
-    const identity = req.user.id;
 
     if (!roomName) {
       return res.status(400).json({ error: "roomName required" });
     }
 
-    const token = await generateLiveKitToken(roomName, identity, { callType });
+    const user = await User.findById(req.user.id).select("name");
+    // Identity must be unique per room — use userId so two users with same name don't collide
+    const identity = req.user.id;
+
+    console.log(`[LiveKit token] room=${roomName} identity=${identity} name=${user?.name}`);
+    const token = await generateLiveKitToken(roomName, identity, { callType, name: user?.name });
 
     res.json({ token, url: process.env.LIVEKIT_URL });
   } catch (error) {

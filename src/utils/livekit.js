@@ -1,6 +1,6 @@
 const { AccessToken } = require("livekit-server-sdk");
 
-function generateLiveKitToken(roomName, identity, metadata = {}) {
+async function generateLiveKitToken(roomName, identity, metadata = {}) {
   const apiKey = process.env.LIVEKIT_API_KEY;
   const apiSecret = process.env.LIVEKIT_API_SECRET;
 
@@ -8,9 +8,11 @@ function generateLiveKitToken(roomName, identity, metadata = {}) {
     throw new Error("LiveKit credentials not configured");
   }
 
+  const { name, ...rest } = metadata;
   const at = new AccessToken(apiKey, apiSecret, {
     identity,
-    metadata: JSON.stringify(metadata),
+    name: name || identity,
+    metadata: JSON.stringify(rest),
   });
 
   at.addGrant({
@@ -21,7 +23,7 @@ function generateLiveKitToken(roomName, identity, metadata = {}) {
     canPublishData: true,
   });
 
-  return at.toJwt();
+  return await at.toJwt();
 }
 
 module.exports = { generateLiveKitToken };

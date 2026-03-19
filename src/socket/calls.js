@@ -15,9 +15,11 @@ const registerCallHandlers = (socket, { emitToUser, io }) => {
       });
       await callLog.save();
 
-      io.to(`conv:${callLog.conversationId}`).emit("call:user_joined", {
+      // Tell the initiator to now connect to LiveKit (both join at the same time)
+      io.to(`user:${callLog.initiator}`).emit("call:accepted", {
         callId,
-        userId: socket.userId,
+        roomName: callLog.livekitRoomName,
+        callType: callLog.callType,
       });
     } catch (error) {
       console.error("call:accepted error:", error);
