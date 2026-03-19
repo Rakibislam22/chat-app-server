@@ -68,7 +68,6 @@ const callLogSchema = new mongoose.Schema(
 );
 
 callLogSchema.index({ conversationId: 1, createdAt: -1 });
-callLogSchema.index({ livekitRoomName: 1 });
 callLogSchema.index({ status: 1, createdAt: -1 });
 
 module.exports = mongoose.model("CallLog", callLogSchema);
