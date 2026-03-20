@@ -16,6 +16,8 @@ const registerTypingHandlers = require("./typing");
 const registerWorkspaceHandlers = require("./workspace");
 const registerModuleHandlers = require("./module");
 const registerFeedHandlers = require("./feed");
+const registerCallHandlers = require("./calls");
+const registerVoiceChannelHandlers = require("./voiceChannel");
 
 const socketHandler = (io) => {
   const helpers = createHelpers(io);
@@ -50,6 +52,7 @@ const socketHandler = (io) => {
 
     console.log(`✅ User connected: ${socket.id} (userId: ${socket.userId})`);
     socket.join(`feed:user:${socket.userId}`);
+    socket.join(`user:${socket.userId}`);
 
     // Register presence handlers and start the heartbeat interval
     const { refreshPresence, cleanup: cleanupPresence } =
@@ -117,6 +120,8 @@ const socketHandler = (io) => {
       io,
     });
     registerFeedHandlers(socket);
+    registerCallHandlers(socket, { ...helpers, io });
+    registerVoiceChannelHandlers(socket, { io });
 
     // ----------------------------------------------------------------
     // Handle disconnection — clean up Redis mapping
