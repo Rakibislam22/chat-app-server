@@ -31,11 +31,6 @@ const moduleSchema = new mongoose.Schema(
       default: "text",
     },
 
-    isVoiceChannel: {
-      type: Boolean,
-      default: false,
-    },
-
     activeParticipants: [
       {
         userId: { type: mongoose.Schema.Types.ObjectId, ref: "User" },

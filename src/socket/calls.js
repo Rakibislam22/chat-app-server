@@ -37,17 +37,19 @@ const registerCallHandlers = (socket, { emitToUser, io }) => {
       callLog.endedAt = new Date();
       await callLog.save();
 
-      await Message.create({
-        conversationId: callLog.conversationId,
-        sender: callLog.initiator._id,
-        callLog: {
-          callType: callLog.callType,
-          duration: 0,
-          status: "declined",
-          initiator: callLog.initiator._id,
-          participants: [callLog.initiator._id],
-        },
-      });
+      if (callLog.conversationId) {
+        await Message.create({
+          conversationId: callLog.conversationId,
+          sender: callLog.initiator._id,
+          callLog: {
+            callType: callLog.callType,
+            duration: 0,
+            status: "declined",
+            initiator: callLog.initiator._id,
+            participants: [callLog.initiator._id],
+          },
+        });
+      }
 
       await emitToUser(callLog.initiator._id.toString(), "call:declined", { callId });
     } catch (error) {
@@ -67,19 +69,25 @@ const registerCallHandlers = (socket, { emitToUser, io }) => {
       callLog.status = "ended";
       await callLog.save();
 
-      await Message.create({
-        conversationId: callLog.conversationId,
-        sender: callLog.initiator._id,
-        callLog: {
-          callType: callLog.callType,
-          duration,
-          status: "ended",
-          initiator: callLog.initiator._id,
-          participants: callLog.participants.map((p) => p.userId),
-        },
-      });
-
-      io.to(`conv:${callLog.conversationId}`).emit("call:ended", { callId, duration });
+      if (callLog.conversationId) {
+        await Message.create({
+          conversationId: callLog.conversationId,
+          sender: callLog.initiator._id,
+          callLog: {
+            callType: callLog.callType,
+            duration,
+            status: "ended",
+            initiator: callLog.initiator._id,
+            participants: callLog.participants.map((p) => p.userId),
+          },
+        });
+        io.to(`conv:${callLog.conversationId}`).emit("call:ended", { callId, duration });
+      } else {
+        // Workspace call — notify each participant directly
+        callLog.participants.forEach((p) => {
+          io.to(`user:${p.userId}`).emit("call:ended", { callId, duration });
+        });
+      }
     } catch (error) {
       console.error("call:ended error:", error);
     }

@@ -1,6 +1,7 @@
 const express = require("express");
 const router = express.Router();
 const multer = require("multer");
+const { randomUUID } = require("crypto");
 const { PutObjectCommand } = require("@aws-sdk/client-s3");
 const r2Client = require("../config/r2");
 const { v4: uuidv4 } = require("uuid");
@@ -67,7 +68,6 @@ router.post("/token", async (req, res) => {
     // Identity must be unique per room — use userId so two users with same name don't collide
     const identity = req.user.id;
 
-    console.log(`[LiveKit token] room=${roomName} identity=${identity} name=${user?.name}`);
     const token = await generateLiveKitToken(roomName, identity, { callType, name: user?.name, avatar: user?.avatar || "" });
 
     res.json({ token, url: process.env.LIVEKIT_URL });
@@ -87,6 +87,10 @@ router.post("/initiate", async (req, res) => {
       return res.status(400).json({ error: "conversationId and callType required" });
     }
 
+    if (!["audio", "video"].includes(callType)) {
+      return res.status(400).json({ error: "callType must be 'audio' or 'video'" });
+    }
+
     const conversation = await Conversation.findOne({
       _id: conversationId,
       participants: initiatorId,
@@ -96,9 +100,15 @@ router.post("/initiate", async (req, res) => {
       return res.status(404).json({ error: "Conversation not found" });
     }
 
+    // Prevent duplicate active calls on the same conversation
+    const existingCall = await CallLog.findOne({ conversationId, status: "active" });
+    if (existingCall) {
+      return res.status(409).json({ error: "A call is already active in this conversation" });
+    }
+
     const initiator = await User.findById(initiatorId).select("name avatar");
     const isGroup = conversation.type === "group";
-    const livekitRoomName = `call-${require("crypto").randomUUID()}`;
+    const livekitRoomName = `call-${randomUUID()}`;
 
     const callLog = await CallLog.create({
       type: isGroup ? "group" : "dm",
