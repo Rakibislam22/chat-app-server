@@ -37,6 +37,7 @@ const socketHandler = (io) => {
         return next(new Error("Authentication error: Invalid token claims"));
       }
       socket.userId = decoded.id;
+      socket.data.userId = decoded.id; // required for fetchSockets()-based targeting
       next();
     } catch (err) {
       return next(new Error("Authentication error: Invalid token"));
