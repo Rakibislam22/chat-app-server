@@ -305,10 +305,14 @@ const registerWordSpyHandlers = (socket, { io, emitToUser }) => {
   // ================================================================
   // wordspy:start — lobby → word_assign → word_reveal
   // ================================================================
-  socket.on("wordspy:start", async ({ category, difficulty, maxRounds } = {}) => {
+  socket.on("wordspy:start", async ({ moduleId, category, difficulty, maxRounds } = {}) => {
     try {
+      if (!moduleId || !mongoose.Types.ObjectId.isValid(moduleId)) {
+        return socket.emit("wordspy:error", { message: "Invalid module" });
+      }
       const game = await WordSpyGame.findOne({
-        "players.userId": socket.userId,
+        moduleId,
+        hostId: socket.userId,
         phase: "lobby",
       });
       if (!game) return socket.emit("wordspy:error", { message: "No lobby found" });
@@ -502,6 +506,26 @@ const registerWordSpyHandlers = (socket, { io, emitToUser }) => {
       broadcastRoomUpdate(io, game);
     } catch (err) {
       console.error("wordspy:next:round error:", err.message);
+    }
+  });
+
+  // ================================================================
+  // wordspy:disband — host only, lobby or results phase only
+  // ================================================================
+  socket.on("wordspy:disband", async () => {
+    try {
+      const game = await WordSpyGame.findOne({
+        hostId: socket.userId,
+        phase: { $in: ["lobby", "results"] },
+      });
+      if (!game) return socket.emit("wordspy:error", { message: "Not authorized or wrong phase" });
+
+      clearPhaseTimer(game._id);
+      const roomKey = `wordspy:${game._id}`;
+      io.to(roomKey).emit("wordspy:disbanded", { message: "The host has disbanded the room." });
+      await WordSpyGame.findByIdAndDelete(game._id);
+    } catch (err) {
+      console.error("wordspy:disband error:", err.message);
     }
   });
 

@@ -23,6 +23,7 @@ const openRouterPost = async (messages, maxTokens = 300, temperature = 0.8) => {
       timeout: 15000,
     }
   );
+  console.log("[WordSpy AI] Raw API response:", JSON.stringify(data, null, 2));
   return data.choices?.[0]?.message?.content?.trim() || "";
 };
 
@@ -53,19 +54,39 @@ Return ONLY valid JSON, no markdown:
 
   let raw;
   try {
-    raw = await openRouterPost([{ role: "user", content: prompt }], 200, 0.8);
-  } catch {
+    console.log(`[WordSpy AI] Generating word pair — category: "${category}", difficulty: "${difficulty}", model: ${MODEL}`);
+    raw = await openRouterPost([{ role: "user", content: prompt }], 5000, 0.8);
+  } catch (firstErr) {
+    console.error("[WordSpy AI] First attempt failed:", firstErr?.response?.status, firstErr?.response?.data || firstErr.message);
     // Retry once
-    raw = await openRouterPost([{ role: "user", content: prompt }], 200, 0.8);
+    try {
+      console.log("[WordSpy AI] Retrying...");
+      raw = await openRouterPost([{ role: "user", content: prompt }], 5000, 0.8);
+    } catch (retryErr) {
+      console.error("[WordSpy AI] Retry also failed:", retryErr?.response?.status, retryErr?.response?.data || retryErr.message);
+      throw retryErr;
+    }
   }
+
+  console.log("[WordSpy AI] Raw content from model:", raw);
 
   // Strip markdown fences if model wraps in them
   const jsonStr = raw.replace(/```json?\n?/g, "").replace(/```/g, "").trim();
-  const parsed = JSON.parse(jsonStr);
+
+  let parsed;
+  try {
+    parsed = JSON.parse(jsonStr);
+  } catch (parseErr) {
+    console.error("[WordSpy AI] JSON parse failed. Raw string was:", JSON.stringify(jsonStr));
+    throw new Error("AI returned non-JSON response");
+  }
 
   if (!parsed?.realWord || !parsed?.impostorWord) {
+    console.error("[WordSpy AI] Missing fields in parsed response:", parsed);
     throw new Error("AI returned invalid word pair structure");
   }
+
+  console.log(`[WordSpy AI] Word pair generated: realWord="${parsed.realWord}", impostorWord="${parsed.impostorWord}"`);
 
   return {
     realWord: String(parsed.realWord).trim(),
