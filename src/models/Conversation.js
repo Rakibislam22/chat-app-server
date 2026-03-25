@@ -27,6 +27,13 @@ const conversationSchema = new mongoose.Schema(
       maxlength: 100,
       default: null,
     },
+    // Group description
+    description: {
+      type: String,
+      trim: true,
+      maxlength: 500,
+      default: "",
+    },
 
     // Optional group avatar URL
     avatar: {
@@ -64,6 +71,14 @@ const conversationSchema = new mongoose.Schema(
         type: Date,
         default: null,
       },
+      gifUrl: {
+        type: String,
+        default: null,
+      },
+      attachments: {
+        type: Array,
+        default: [],
+      },
     },
 
     // Unread message count per participant
@@ -94,6 +109,25 @@ const conversationSchema = new mongoose.Schema(
       {
         type: mongoose.Schema.Types.ObjectId,
         ref: "User",
+      },
+    ],
+    // ── Pinned Messages (NEW) ──────────────────────────────────
+    pinnedMessages: [
+      {
+        messageId: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "Message",
+          required: true,
+        },
+        pinnedBy: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "User",
+          required: true,
+        },
+        pinnedAt: {
+          type: Date,
+          default: Date.now,
+        },
       },
     ],
   },

@@ -24,11 +24,19 @@ const moduleSchema = new mongoose.Schema(
 
     // "text"        — standard channel everyone can post in
     // "announcement"— only admins/owner can post; members read-only
+    // "voice"       — voice channel (LiveKit)
     type: {
       type: String,
-      enum: ["text", "announcement"],
+      enum: ["text", "announcement", "voice"],
       default: "text",
     },
+
+    activeParticipants: [
+      {
+        userId: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+        joinedAt: Date,
+      },
+    ],
 
     // Must match one of the workspace's category names (string, not ObjectId)
     // null means "no category" (uncategorised)
@@ -50,11 +58,20 @@ const moduleSchema = new mongoose.Schema(
       default: false,
     },
 
-    // Only relevant when isPrivate === true
-    allowedMembers: [
+    // NEW: Role-based / Member-based access for private channels (Discord style overrides)
+    permissionOverrides: [
       {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: "User",
+        targetId: {
+          type: mongoose.Schema.Types.ObjectId, // Can be a User ID or a Role ID
+          required: true,
+        },
+        targetType: {
+          type: String,
+          enum: ["member", "role"],
+          required: true,
+        },
+        allow: [{ type: String }], // Array of PERMISSION strings
+        deny: [{ type: String }],  // Array of PERMISSION strings
       },
     ],
 

@@ -143,6 +143,47 @@ exports.listMyWorkspaces = async (req, res) => {
 };
 
 // ---------------------------------------------------------------------------
+// GET /api/workspaces/discover
+// List public workspaces for discovery.
+// Query: query? (search by name), limit? (default 20)
+// ---------------------------------------------------------------------------
+exports.discoverWorkspaces = async (req, res) => {
+  try {
+    const { query, limit = 20 } = req.query;
+    const filter = { visibility: "public" };
+
+    if (query?.trim()) {
+      const escapedQuery = query.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      filter.name = { $regex: escapedQuery, $options: "i" };
+    }
+
+    const safeLimit = Math.max(1, Math.min(parseInt(limit, 10) || 20, 100));
+
+    const workspaces = await Workspace.find(filter)
+      .select("name description avatar banner createdBy members createdAt")
+      .populate("createdBy", "name avatar")
+      .limit(safeLimit)
+      .sort({ createdAt: -1 });
+
+    const result = workspaces.map((ws) => ({
+      _id: ws._id,
+      name: ws.name,
+      avatar: ws.avatar,
+      banner: ws.banner,
+      description: ws.description,
+      memberCount: ws.members.length,
+      createdBy: ws.createdBy,
+      createdAt: ws.createdAt,
+    }));
+
+    res.json(result);
+  } catch (err) {
+    console.error("discoverWorkspaces error:", err.message);
+    res.status(500).json({ message: "Server error" });
+  }
+};
+
+// ---------------------------------------------------------------------------
 // GET /api/workspaces/:workspaceId
 // Get full workspace details including populated members and categories.
 // req.workspace and req.memberRecord are attached by middleware.
@@ -173,7 +214,7 @@ exports.getWorkspace = async (req, res) => {
 // ---------------------------------------------------------------------------
 exports.updateWorkspace = async (req, res) => {
   try {
-    const { name, description, avatar, visibility } = req.body;
+    const { name, description, avatar, banner, visibility } = req.body;
     const workspace = req.workspace; // attached by loadWorkspace
 
     // ── Require at least one field ───────────────────────────────
@@ -181,6 +222,7 @@ exports.updateWorkspace = async (req, res) => {
       name === undefined &&
       description === undefined &&
       avatar === undefined &&
+      banner === undefined &&
       visibility === undefined
     ) {
       return res
@@ -211,6 +253,10 @@ exports.updateWorkspace = async (req, res) => {
       workspace.avatar = avatar || null;
     }
 
+    if (banner !== undefined) {
+      workspace.banner = banner || null;
+    }
+
     if (visibility !== undefined) {
       if (visibility !== "public" && visibility !== "private") {
         return res
@@ -229,6 +275,7 @@ exports.updateWorkspace = async (req, res) => {
         name: workspace.name,
         description: workspace.description,
         avatar: workspace.avatar,
+        banner: workspace.banner,
         visibility: workspace.visibility,
       });
     }
@@ -238,6 +285,7 @@ exports.updateWorkspace = async (req, res) => {
       name: workspace.name,
       description: workspace.description,
       avatar: workspace.avatar,
+      banner: workspace.banner,
       visibility: workspace.visibility,
     });
   } catch (err) {
@@ -664,6 +712,38 @@ exports.generateInvite = async (req, res) => {
 // Join a workspace via an invite code. No auth middleware on workspace needed —
 // the invite code itself is the credential. Only requireAuth runs before this.
 // ---------------------------------------------------------------------------
+exports.getWorkspaceByInvite = async (req, res) => {
+  try {
+    const { inviteCode } = req.params;
+    const workspace = await Workspace.findOne({ inviteCode })
+      .select("name avatar description members inviteCodeExpiresAt")
+      .populate("members.user", "name avatar");
+
+    if (!workspace) {
+      return res.status(404).json({ message: "Invalid or expired invite link" });
+    }
+
+    if (
+      workspace.inviteCodeExpiresAt &&
+      new Date() > workspace.inviteCodeExpiresAt
+    ) {
+      return res.status(410).json({ message: "This invite link has expired" });
+    }
+
+    const memberCount = workspace.members.length;
+    res.status(200).json({
+      _id: workspace._id,
+      name: workspace.name,
+      avatar: workspace.avatar,
+      description: workspace.description,
+      memberCount,
+    });
+  } catch (err) {
+    console.error("getWorkspaceByInvite error:", err.message);
+    res.status(500).json({ message: "Server error" });
+  }
+};
+
 exports.joinViaInvite = async (req, res) => {
   try {
     const { inviteCode } = req.params;
@@ -692,6 +772,14 @@ exports.joinViaInvite = async (req, res) => {
       return res
         .status(400)
         .json({ message: "You are already a member of this workspace" });
+    }
+
+    // Banned check
+    const isBannedInvite = workspace.bannedUsers.some(
+      (b) => b.user.toString() === userId.toString(),
+    );
+    if (isBannedInvite) {
+      return res.status(403).json({ message: "You are banned from this workspace." });
     }
 
     // Member cap check
@@ -873,6 +961,340 @@ exports.deleteCategory = async (req, res) => {
     res.json({ message: "Category deleted" });
   } catch (err) {
     console.error("deleteCategory error:", err.message);
+    res.status(500).json({ message: "Server error" });
+  }
+};
+
+// ---------------------------------------------------------------------------
+// POST /api/workspaces/:workspaceId/roles
+// Create a custom role in the workspace (admin+).
+// Body: { name, color?, permissions? }
+// ---------------------------------------------------------------------------
+exports.createRole = async (req, res) => {
+  try {
+    const workspace = req.workspace;
+    const { name, color, permissions } = req.body;
+
+    if (!name || !name.trim()) {
+      return res.status(400).json({ message: "Role name is required" });
+    }
+    const trimmedName = name.trim();
+
+    const duplicate = workspace.roles?.some(
+      (r) => r.name.toLowerCase() === trimmedName.toLowerCase(),
+    );
+    if (duplicate) {
+      return res.status(400).json({ message: `Role "${trimmedName}" already exists` });
+    }
+
+    const newRole = {
+      name: trimmedName,
+      color: color || "#5b5b8f",
+      permissions: permissions || [],
+    };
+
+    const updated = await Workspace.findByIdAndUpdate(
+      workspace._id,
+      { $push: { roles: newRole } },
+      { new: true, runValidators: true },
+    );
+    const addedRole = updated.roles[updated.roles.length - 1];
+
+    const io = req.app.get("io");
+    io.to(`workspace:${workspace._id}`).emit("workspace:role-created", {
+      workspaceId: workspace._id,
+      role: addedRole,
+    });
+
+    res.status(201).json(addedRole);
+  } catch (err) {
+    console.error("createRole error:", err.message);
+    res.status(500).json({ message: "Server error" });
+  }
+};
+
+// ---------------------------------------------------------------------------
+// PATCH /api/workspaces/:workspaceId/roles/:roleId
+// Update a custom role's name, color, or permissions (admin+).
+// ---------------------------------------------------------------------------
+exports.updateRole = async (req, res) => {
+  try {
+    const workspace = req.workspace;
+    const { roleId } = req.params;
+    const { name, color, permissions } = req.body;
+
+    const role = workspace.roles?.id(roleId);
+    if (!role) {
+      return res.status(404).json({ message: "Role not found" });
+    }
+
+    const updateFields = {};
+    if (name !== undefined) {
+      if (!name.trim()) return res.status(400).json({ message: "Role name cannot be blank" });
+      const trimmedName = name.trim();
+      const duplicate = workspace.roles?.some(
+        (r) => r._id.toString() !== roleId && r.name.toLowerCase() === trimmedName.toLowerCase()
+      );
+      if (duplicate) {
+        return res.status(400).json({ message: `Role "${trimmedName}" already exists` });
+      }
+      updateFields["roles.$[r].name"] = trimmedName;
+    }
+    if (color !== undefined) updateFields["roles.$[r].color"] = color;
+    if (permissions !== undefined) updateFields["roles.$[r].permissions"] = permissions;
+
+    const updated = await Workspace.findByIdAndUpdate(
+      workspace._id,
+      { $set: updateFields },
+      { new: true, arrayFilters: [{ "r._id": role._id }] },
+    );
+    const updatedRole = updated.roles.id(roleId);
+
+    const io = req.app.get("io");
+    io.to(`workspace:${workspace._id}`).emit("workspace:role-updated-custom", {
+      workspaceId: workspace._id,
+      role: updatedRole,
+    });
+
+    res.json(updatedRole);
+  } catch (err) {
+    console.error("updateRole error:", err.message);
+    res.status(500).json({ message: "Server error" });
+  }
+};
+
+// ---------------------------------------------------------------------------
+// DELETE /api/workspaces/:workspaceId/roles/:roleId
+// Delete a custom role from the workspace and strip it from members (admin+).
+// ---------------------------------------------------------------------------
+exports.deleteRole = async (req, res) => {
+  try {
+    const workspace = req.workspace;
+    const { roleId } = req.params;
+
+    const role = workspace.roles?.id(roleId);
+    if (!role) {
+      return res.status(404).json({ message: "Role not found" });
+    }
+
+    // Remove role from workspace and strip from all members in one shot
+    await Workspace.findByIdAndUpdate(workspace._id, {
+      $pull: {
+        roles: { _id: role._id },
+        "members.$[].roleIds": role._id,
+      },
+    });
+
+    const io = req.app.get("io");
+    io.to(`workspace:${workspace._id}`).emit("workspace:role-deleted-custom", {
+      workspaceId: workspace._id,
+      roleId,
+    });
+
+    res.json({ message: "Role deleted" });
+  } catch (err) {
+    console.error("deleteRole error:", err.message);
+    res.status(500).json({ message: "Server error" });
+  }
+};
+
+// ---------------------------------------------------------------------------
+// PATCH /api/workspaces/:workspaceId/members/:targetUserId/roles
+// Assign or remove custom role IDs for a member (admin+).
+// Body: { roleIds: [...] }  — full replacement of the member's roleIds array
+// ---------------------------------------------------------------------------
+exports.assignRolesToMember = async (req, res) => {
+  try {
+    const workspace = req.workspace;
+    const { targetUserId } = req.params;
+    const { roleIds } = req.body;
+
+    if (!Array.isArray(roleIds)) {
+      return res.status(400).json({ message: "roleIds array is required" });
+    }
+
+    const targetRecord = workspace.members.find(
+      (m) => m.user.toString() === targetUserId,
+    );
+    if (!targetRecord) {
+      return res.status(404).json({ message: "User is not a member of this workspace" });
+    }
+
+    // Validate that all roleIds exist in the workspace roles
+    const validRoleIds = (workspace.roles || []).map((r) => r._id.toString());
+    const invalid = roleIds.filter((id) => !validRoleIds.includes(id));
+    if (invalid.length > 0) {
+      return res.status(400).json({ message: "One or more role IDs are invalid" });
+    }
+
+    await Workspace.findByIdAndUpdate(
+      workspace._id,
+      { $set: { "members.$[elem].roleIds": roleIds } },
+      { arrayFilters: [{ "elem.user": targetUserId }] },
+    );
+
+    const io = req.app.get("io");
+    io.to(`workspace:${workspace._id}`).emit("workspace:member-roles-updated", {
+      workspaceId: workspace._id,
+      targetUserId,
+      roleIds,
+    });
+
+    res.json({ message: "Roles updated" });
+  } catch (err) {
+    console.error("assignRolesToMember error:", err.message);
+    res.status(500).json({ message: "Server error" });
+  }
+};
+
+// ---------------------------------------------------------------------------
+// POST /api/workspaces/:workspaceId/join-public
+// Join a public workspace directly (no invite code needed).
+// ---------------------------------------------------------------------------
+exports.joinPublicWorkspace = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const workspace = await Workspace.findById(req.params.workspaceId);
+
+    if (!workspace) {
+      return res.status(404).json({ message: "Workspace not found" });
+    }
+
+    if (workspace.visibility !== "public") {
+      return res.status(403).json({ message: "This workspace is not public" });
+    }
+
+    const alreadyMember = workspace.members.some(
+      (m) => m.user.toString() === userId,
+    );
+    if (alreadyMember) {
+      return res.status(400).json({ message: "You are already a member" });
+    }
+
+    // Banned check
+    const isBannedPublic = workspace.bannedUsers.some(
+      (b) => b.user.toString() === userId.toString(),
+    );
+    if (isBannedPublic) {
+      return res.status(403).json({ message: "You are banned from this workspace." });
+    }
+
+    if (workspace.members.length >= MAX_WORKSPACE_MEMBERS) {
+      return res.status(400).json({
+        message: `Workspace has reached the member limit (${MAX_WORKSPACE_MEMBERS})`,
+      });
+    }
+
+    workspace.members.push({ user: userId, role: "member" });
+    await workspace.save();
+    await workspace.populate("createdBy", "name avatar");
+
+    const io = req.app.get("io");
+    if (io) {
+      io.to(`workspace:${workspace._id}`).emit("workspace:member-joined", {
+        workspaceId: workspace._id,
+        user: { _id: userId },
+      });
+    }
+
+    res.status(200).json({ ...workspace.toObject(), myRole: "member" });
+  } catch (err) {
+    console.error("joinPublicWorkspace error:", err.message);
+    res.status(500).json({ message: "Server error" });
+  }
+};
+
+// ---------------------------------------------------------------------------
+// GET /api/workspaces/:workspaceId/bans
+// List all banned users with populated user data.
+// ---------------------------------------------------------------------------
+exports.getBannedUsers = async (req, res) => {
+  try {
+    const workspace = req.workspace;
+    await workspace.populate([
+      { path: "bannedUsers.user", select: "name avatar email" },
+      { path: "bannedUsers.bannedBy", select: "name avatar" },
+    ]);
+    res.json(workspace.bannedUsers);
+  } catch (err) {
+    console.error("getBannedUsers error:", err.message);
+    res.status(500).json({ message: "Server error" });
+  }
+};
+
+// ---------------------------------------------------------------------------
+// POST /api/workspaces/:workspaceId/members/:targetUserId/ban
+// Ban a member: adds to bannedUsers, removes from members.
+// Guards: cannot ban the owner; cannot self-ban.
+// ---------------------------------------------------------------------------
+exports.banMember = async (req, res) => {
+  try {
+    const workspace = req.workspace;
+    const wsId = workspace._id;
+    const requesterId = req.user.id;
+    const { targetUserId } = req.params;
+
+    const ownerRecord = workspace.members.find((m) => m.role === "owner");
+    const ownerId = ownerRecord?.user.toString();
+
+    if (targetUserId === ownerId) {
+      return res.status(400).json({ message: "The workspace owner cannot be banned" });
+    }
+    if (targetUserId === requesterId) {
+      return res.status(400).json({ message: "You cannot ban yourself" });
+    }
+
+    const alreadyBanned = workspace.bannedUsers.some(
+      (b) => b.user.toString() === targetUserId,
+    );
+    if (alreadyBanned) {
+      return res.status(400).json({ message: "User is already banned" });
+    }
+
+    await workspace.updateOne({
+      $push: { bannedUsers: { user: targetUserId, bannedBy: requesterId, reason: null } },
+      $pull: { members: { user: targetUserId } },
+    });
+
+    const io = req.app.get("io");
+    if (io) {
+      io.to(`workspace:${wsId}`).emit("workspace:member-banned", {
+        workspaceId: wsId,
+        userId: targetUserId,
+        bannedBy: requesterId,
+      });
+    }
+
+    res.status(204).send();
+  } catch (err) {
+    console.error("banMember error:", err.message);
+    res.status(500).json({ message: "Server error" });
+  }
+};
+
+// ---------------------------------------------------------------------------
+// DELETE /api/workspaces/:workspaceId/members/:targetUserId/ban
+// Unban a previously banned user.
+// ---------------------------------------------------------------------------
+exports.unbanMember = async (req, res) => {
+  try {
+    const workspace = req.workspace;
+    const { targetUserId } = req.params;
+
+    const isBanned = workspace.bannedUsers.some(
+      (b) => b.user.toString() === targetUserId,
+    );
+    if (!isBanned) {
+      return res.status(400).json({ message: "User is not banned" });
+    }
+
+    await workspace.updateOne({
+      $pull: { bannedUsers: { user: targetUserId } },
+    });
+
+    res.status(204).send();
+  } catch (err) {
+    console.error("unbanMember error:", err.message);
     res.status(500).json({ message: "Server error" });
   }
 };

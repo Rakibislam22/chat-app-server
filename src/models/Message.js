@@ -56,6 +56,26 @@ const messageSchema = new mongoose.Schema(
       ref: "Message",
       default: null,
     },
+    //  NEW: Thread Metadata
+    replyCount: {
+      type: Number,
+      default: 0,
+    },
+    lastReplyAt: {
+      type: Date,
+      default: null,
+    },
+    //  NEW: Attachments
+    attachments: [
+      {
+        url: { type: String, required: true },
+        publicId: { type: String }, // For Cloudinary/S3 deletion
+        resourceType: { type: String }, // image, video, raw, audio
+        format: { type: String },
+        name: { type: String },
+        size: { type: Number },
+      },
+    ],
     // Scheduled Messages
     scheduledFromId: {
       type: mongoose.Schema.Types.ObjectId,
@@ -105,6 +125,58 @@ const messageSchema = new mongoose.Schema(
       of: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }],
       default: {},
     },
+    // ────────────────────────────────────────────────────────
+    // ✅ NEW: Poll Data
+    // ────────────────────────────────────────────────────────
+    poll: {
+      question: {
+        type: String,
+        trim: true,
+        maxlength: 500,
+      },
+      options: [
+        {
+          id: {
+            type: String,
+            required: true,
+          },
+          text: {
+            type: String,
+            required: true,
+            trim: true,
+            maxlength: 200,
+          },
+          votes: [
+            {
+              type: mongoose.Schema.Types.ObjectId,
+              ref: "User",
+            },
+          ],
+        },
+      ],
+      allowMultiple: {
+        type: Boolean,
+        default: false,
+      },
+      expiresAt: {
+        type: Date,
+      },
+      createdBy: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "User",
+        required: function () {
+          return !!this.poll && !!this.poll.question; // ✅ Only required if poll exists
+        },
+      },
+    },
+    // Call Log Data
+    callLog: {
+      callType: { type: String, enum: ["audio", "video"] },
+      duration: Number, // seconds
+      status: { type: String, enum: ["ended", "missed", "declined"] },
+      initiator: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+      participants: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }],
+    },
   },
   { timestamps: true },
 );
@@ -135,5 +207,54 @@ messageSchema.index({ replyTo: 1 });
 
 // Scheduled Messages
 messageSchema.index({ scheduledFromId: 1 }, { unique: true, sparse: true });
+
+
+// ──────────────────────────────────────────────────────────
+// Get total votes
+// ──────────────────────────────────────────────────────────
+messageSchema.methods.getTotalVotes = function () {
+  if (!this.poll || !Array.isArray(this.poll.options)) {
+    return 0;
+  }
+
+  return this.poll.options.reduce((total, opt) => {
+    return total + (Array.isArray(opt.votes) ? opt.votes.length : 0);
+  }, 0);
+};
+
+// ──────────────────────────────────────────────────────────
+// Check if poll expired
+// ──────────────────────────────────────────────────────────
+messageSchema.methods.isPollExpired = function () {
+  if (!this.poll || !this.poll.expiresAt) {
+    return false;
+  }
+
+  return new Date() > new Date(this.poll.expiresAt);
+};
+
+// ──────────────────────────────────────────────────────────
+// Get poll results
+// ──────────────────────────────────────────────────────────
+messageSchema.methods.getPollResults = function () {
+  if (!this.poll || !Array.isArray(this.poll.options)) {
+    return [];
+  }
+
+  const totalVotes = this.getTotalVotes();
+
+  return this.poll.options.map((opt) => {
+    const voteCount = Array.isArray(opt.votes) ? opt.votes.length : 0;
+
+    return {
+      id: opt.id,
+      text: opt.text,
+      votes: voteCount,
+      percentage: totalVotes > 0
+        ? Math.round((voteCount / totalVotes) * 100)
+        : 0,
+    };
+  });
+};
 
 module.exports = mongoose.model("Message", messageSchema);

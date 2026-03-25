@@ -6,6 +6,21 @@
 
 const Message = require("../models/Message");
 const Conversation = require("../models/Conversation");
+const { DeleteObjectCommand } = require("@aws-sdk/client-s3");
+const r2Client = require("../config/r2");
+
+async function deleteR2Attachments(attachments) {
+  if (!attachments?.length) return;
+  await Promise.allSettled(
+    attachments.map((att) => {
+      const key = att.publicId || att.url?.split("/").pop();
+      if (!key) return Promise.resolve();
+      return r2Client.send(
+        new DeleteObjectCommand({ Bucket: process.env.R2_BUCKET_NAME, Key: key })
+      );
+    })
+  );
+}
 
 const registerMessageHandlers = (socket, { emitToUser, isUserOnline, io }) => {
   // ----------------------------------------------------------------
@@ -16,9 +31,9 @@ const registerMessageHandlers = (socket, { emitToUser, isUserOnline, io }) => {
   // ----------------------------------------------------------------
   socket.on(
     "message:send",
-    async ({ conversationId, receiverId, text, gifUrl, tempId, replyTo }) => {
+    async ({ conversationId, receiverId, text, gifUrl, tempId, replyTo, attachments }) => {
       if (!conversationId) return;
-      if (!text?.trim() && !gifUrl) return;
+      if (!text?.trim() && !gifUrl && (!attachments || attachments.length === 0)) return;
 
       try {
         // Fetch conversation to determine type and validate membership
@@ -48,11 +63,27 @@ const registerMessageHandlers = (socket, { emitToUser, isUserOnline, io }) => {
           receiverId: isGroup ? null : receiverId,
           status: "sent",
           replyTo: replyTo || null,
+          attachments: attachments || [],
         };
         if (text?.trim()) messageData.text = text.trim();
         if (gifUrl) messageData.gifUrl = gifUrl;
 
         const message = await Message.create(messageData);
+
+        // ── Handle Thread Metadata Update ────────────────────────────
+        if (replyTo) {
+          const updatedReplyTo = await Message.findByIdAndUpdate(replyTo, {
+            $inc: { replyCount: 1 },
+            $set: { lastReplyAt: message.createdAt },
+          }, { new: true });
+          
+          // Emit thread update to the room
+          io.to(`conv:${conversationId}`).emit("message:thread:update", {
+            messageId: replyTo,
+            replyCount: updatedReplyTo.replyCount,
+            lastReplyAt: message.createdAt,
+          });
+        }
 
         // ── Populate replyTo + sender for the payload ───────────────
         if (message.replyTo) {
@@ -66,9 +97,11 @@ const registerMessageHandlers = (socket, { emitToUser, isUserOnline, io }) => {
 
         // ── Update lastMessage + unreadCount ────────────────────────
         const lastMessageUpdate = {
-          text: gifUrl ? "GIF" : text.trim(),
+          text: gifUrl ? "GIF" : (text?.trim() || ""),
           sender: socket.userId,
           timestamp: message.createdAt,
+          gifUrl: gifUrl || null,
+          attachments: attachments?.length > 0 ? attachments : [],
         };
 
         if (isGroup) {
@@ -107,6 +140,7 @@ const registerMessageHandlers = (socket, { emitToUser, isUserOnline, io }) => {
           receiverId: isGroup ? null : receiverId,
           text: message.text,
           gifUrl: message.gifUrl,
+          attachments: message.attachments,
           replyTo: message.replyTo || null,
           status: message.status,
           createdAt: message.createdAt,
@@ -322,8 +356,10 @@ const registerMessageHandlers = (socket, { emitToUser, isUserOnline, io }) => {
       // Only sender can delete for everyone
       if (message.sender.toString() !== socket.userId) return;
 
+      await deleteR2Attachments(message.attachments);
       message.isDeleted = true;
       message.text = "This message was deleted"; // optional fallback text
+      message.attachments = [];
       await message.save();
 
       const payload = {

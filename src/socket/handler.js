@@ -15,6 +15,10 @@ const registerConversationHandlers = require("./conversation");
 const registerTypingHandlers = require("./typing");
 const registerWorkspaceHandlers = require("./workspace");
 const registerModuleHandlers = require("./module");
+const registerFeedHandlers = require("./feed");
+const registerCallHandlers = require("./calls");
+const registerVoiceChannelHandlers = require("./voiceChannel");
+const registerWordSpyHandlers = require("./wordspy");
 
 const socketHandler = (io) => {
   const helpers = createHelpers(io);
@@ -29,7 +33,12 @@ const socketHandler = (io) => {
 
     try {
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      // Validate that JWT contains id claim and it's a valid identifier
+      if (!decoded.id || typeof decoded.id !== "string" || decoded.id.trim() === "") {
+        return next(new Error("Authentication error: Invalid token claims"));
+      }
       socket.userId = decoded.id;
+      socket.data.userId = decoded.id; // required for fetchSockets()-based targeting
       next();
     } catch (err) {
       return next(new Error("Authentication error: Invalid token"));
@@ -37,7 +46,15 @@ const socketHandler = (io) => {
   });
 
   io.on("connection", async (socket) => {
+    // Validate socket.userId before using it
+    if (!socket.userId || typeof socket.userId !== "string") {
+      socket.disconnect(true);
+      return;
+    }
+
     console.log(`✅ User connected: ${socket.id} (userId: ${socket.userId})`);
+    socket.join(`feed:user:${socket.userId}`);
+    socket.join(`user:${socket.userId}`);
 
     // Register presence handlers and start the heartbeat interval
     const { refreshPresence, cleanup: cleanupPresence } =
@@ -104,6 +121,10 @@ const socketHandler = (io) => {
       ...helpers,
       io,
     });
+    registerFeedHandlers(socket);
+    registerCallHandlers(socket, { ...helpers, io });
+    registerVoiceChannelHandlers(socket, { io });
+    const { handleDisconnect: wordSpyDisconnect } = registerWordSpyHandlers(socket, { ...helpers, io });
 
     // ----------------------------------------------------------------
     // Handle disconnection — clean up Redis mapping
@@ -116,6 +137,7 @@ const socketHandler = (io) => {
       cleanupPresence();
       await cleanupTyping();
       cleanupModules();
+      if (wordSpyDisconnect) await wordSpyDisconnect();
 
       if (getIsRedisConnected()) {
         try {

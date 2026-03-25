@@ -139,6 +139,7 @@ exports.getConversations = async (req, res) => {
           _id: conv._id,
           type: "group",
           name: conv.name,
+          description: conv.description, // ← ADD THIS LINE
           avatar: conv.avatar,
           createdBy: conv.createdBy,
           admins: conv.admins,
@@ -199,6 +200,8 @@ exports.getMessages = async (req, res) => {
       .skip(skip)
       .limit(limit)
       .populate("sender", "name avatar")
+      .populate("readBy.user", "name avatar")
+      .populate("poll.options.votes", "name avatar")
       .populate({
         path: "replyTo",
         populate: {

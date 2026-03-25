@@ -45,6 +45,7 @@ const userSchema = new mongoose.Schema(
     lockUntil: {
       type: Date,
     },
+
     // Profile extras
     bio: {
       type: String,
@@ -60,8 +61,43 @@ const userSchema = new mongoose.Schema(
     // resetToken
     resetToken: String,
     resetTokenExpiry: Date,
+
+    // ── Feed / Social fields ─────────────────────────────────────────
+    reputation: {
+      type: Number,
+      min: 0,
+      default: 0,
+    },
+
+    following: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "User",
+      },
+    ],
+
+    followers: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "User",
+      },
+    ],
+
+    followedTags: [
+      {
+        type: String,
+        trim: true,
+        lowercase: true,
+        maxlength: 40,
+      },
+    ],
   },
   { timestamps: true },
 );
+
+// ── Indexes ──────────────────────────────────────────────────────────────────
+userSchema.index({ reputation: -1 }); // leaderboard sort
+userSchema.index({ followedTags: 1 });
+userSchema.index({ followers: 1 });
 
 module.exports = mongoose.model("User", userSchema);

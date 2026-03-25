@@ -14,6 +14,15 @@ const { connectRedis, getIsRedisConnected } = require("./src/config/redis");
 const scheduleRoutes = require("./src/routes/schedule.routes");
 const workspaceRoutes = require("./src/routes/workspace.routes");
 const moduleRoutes = require("./src/routes/module.routes");
+const feedApiRoutes = require("./src/routes/feed.api.routes");
+const feedRoutes = require("./src/routes/feed.routes");
+const pinRoutes = require("./src/routes/pin.routes");
+const pollRoutes = require("./src/routes/poll.routes");
+const readReceiptRoutes = require("./src/routes/readReceipt.routes");
+const feedUserRoutes = require("./src/routes/feed.users.routes");
+const uploadRoutes = require("./src/routes/upload.routes");
+const callRoutes = require("./src/routes/calls.routes");
+const wordspyRoutes = require("./src/routes/WordSpy/wordspy.routes");
 const mongoose = require("mongoose");
 
 const port = process.env.PORT || 3000;
@@ -43,21 +52,37 @@ app.use(
     credentials: true,
   }),
 );
-app.use(express.json());
+app.use(express.json({ limit: "10mb" }));
+app.use(express.urlencoded({ limit: "10mb", extended: true }));
 
 // Routes
+app.use("/api/upload", uploadRoutes); // ← Upload routes
 app.use("/auth", authRoutes);
 app.use("/api/chat", chatRoutes);
 app.use("/api/chat", groupRoutes);
 app.use("/api/reset", resetRoutes);
-app.use("/api/reset", require("./src/routes/reset.routes"));
+app.use("/api/chat/conversations/:id", pinRoutes); // Pin routes nested under conversations
+app.use("/api/chat", pollRoutes); 
+app.use("/api/chat", readReceiptRoutes); // Read receipt routes
 
 // Workspace Routes
 app.use("/api/workspaces", workspaceRoutes);
 app.use("/api/workspaces/:workspaceId/modules", moduleRoutes);
 
+// Feed Routes
+app.use("/api/feed", feedApiRoutes);
+
 // Scheduled Message Routes
 app.use("/api/messages", scheduleRoutes);
+
+// Upload (R2 presign)
+app.use("/api/upload", uploadRoutes);
+
+// Call Routes
+app.use("/api/calls", callRoutes);
+
+// Word Spy Routes
+app.use("/api/wordspy", wordspyRoutes);
 
 // Health check for Deployment (UptimeRobot/Heartbeat)
 app.get("/health", (req, res) => {
