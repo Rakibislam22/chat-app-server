@@ -747,13 +747,17 @@ exports.sendModuleMessage = async (req, res) => {
     let mentions = [];
     if (text) {
       // Get all workspace members to match names against text
-      const wsForMentions = await Workspace.findById(workspaceId).select("members").populate("members.user", "name");
+      const wsForMentions = await Workspace.findById(workspaceId).select("members roles").populate("members.user", "name");
       const availableMembers = wsForMentions.members
         .filter(m => m.user && m.user.name)
         .sort((a, b) => b.user.name.length - a.user.name.length);
 
       const mentionIds = new Set();
       for (const m of availableMembers) {
+        // Only include members who can view this module
+        const candidatePerms = computePermissions(wsForMentions, m, module);
+        if (!candidatePerms.has(Workspace.PERMISSIONS.VIEW_CHANNEL)) continue;
+
         const nameStr = `@${m.user.name}`;
         // Case-insensitive check for the name in the text
         if (text.toLowerCase().includes(nameStr.toLowerCase())) {
@@ -1080,12 +1084,16 @@ exports.searchModuleMessages = async (req, res) => {
     const { workspaceId, moduleId } = req.params;
     const { q } = req.query;
 
-    if (!q || !q.trim()) {
-      return res.json({ messages: [] });
+    if (!mongoose.Types.ObjectId.isValid(workspaceId)) {
+      return res.status(400).json({ message: "Invalid workspace ID" });
+    }
+    if (!mongoose.Types.ObjectId.isValid(moduleId)) {
+      return res.status(400).json({ message: "Invalid module ID" });
     }
 
-    const { workspace, memberRecord } = await checkMembership(res, workspaceId, req.user.id);
-    if (!workspace) return; // Response already sent by checkMembership
+    const result = await checkMembership(res, workspaceId, req.user.id);
+    if (!result) return;
+    const { workspace, memberRecord } = result;
 
     const module = await Module.findOne({ _id: moduleId, workspaceId });
     if (!module) return res.status(404).json({ message: "Module not found" });
@@ -1093,6 +1101,10 @@ exports.searchModuleMessages = async (req, res) => {
     const perms = computePermissions(workspace, memberRecord, module);
     if (!perms.has(Workspace.PERMISSIONS.VIEW_CHANNEL)) {
       return res.status(403).json({ message: "Access denied" });
+    }
+
+    if (!q || !q.trim()) {
+      return res.json({ messages: [] });
     }
 
     // Rely on MongoDB text index
