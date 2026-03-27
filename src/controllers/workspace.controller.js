@@ -132,6 +132,9 @@ exports.listMyWorkspaces = async (req, res) => {
         createdBy: ws.createdBy,
         createdAt: ws.createdAt,
         categories: ws.categories || [],
+        roles: ws.roles || [],
+        inviteCode: ws.inviteCode || null,
+        inviteCodeExpiresAt: ws.inviteCodeExpiresAt || null,
       };
     });
 
@@ -377,7 +380,7 @@ exports.addMembers = async (req, res) => {
 
     await Workspace.findByIdAndUpdate(wsId, {
       $push: { members: { $each: newEntries } },
-    });
+    }, { new: true });
 
     const io = req.app.get("io");
     if (io) {
@@ -816,7 +819,7 @@ exports.revokeInvite = async (req, res) => {
   try {
     await Workspace.findByIdAndUpdate(req.workspace._id, {
       $unset: { inviteCode: "", inviteCodeExpiresAt: "" },
-    });
+    }, { new: true });
 
     res.json({ message: "Invite link revoked" });
   } catch (err) {
@@ -858,7 +861,7 @@ exports.addCategory = async (req, res) => {
     const updated = await Workspace.findByIdAndUpdate(
       req.workspace._id,
       { $push: { categories: newCategory } },
-      { new: true, runValidators: true },
+      { returnDocument: 'after', runValidators: true },
     );
 
     const added = updated.categories[updated.categories.length - 1];
@@ -950,7 +953,7 @@ exports.deleteCategory = async (req, res) => {
 
     await Workspace.findByIdAndUpdate(req.workspace._id, {
       $pull: { categories: { _id: category._id } },
-    });
+    }, { new: true });
 
     const io = req.app.get("io");
     io.to(`workspace:${req.workspace._id}`).emit("workspace:category-deleted", {
@@ -997,7 +1000,7 @@ exports.createRole = async (req, res) => {
     const updated = await Workspace.findByIdAndUpdate(
       workspace._id,
       { $push: { roles: newRole } },
-      { new: true, runValidators: true },
+      { returnDocument: 'after', runValidators: true },
     );
     const addedRole = updated.roles[updated.roles.length - 1];
 
@@ -1048,7 +1051,7 @@ exports.updateRole = async (req, res) => {
     const updated = await Workspace.findByIdAndUpdate(
       workspace._id,
       { $set: updateFields },
-      { new: true, arrayFilters: [{ "r._id": role._id }] },
+      { returnDocument: 'after', arrayFilters: [{ "r._id": role._id }] },
     );
     const updatedRole = updated.roles.id(roleId);
 

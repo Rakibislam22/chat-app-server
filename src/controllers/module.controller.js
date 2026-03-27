@@ -74,7 +74,7 @@ const computePermissions = (workspace, memberRecord, module) => {
     // Legacy support for pure 'admin' string role
     basePerms.add(PERMISSIONS.ADMINISTRATOR);
   } else {
-    // Default member fallback (if no roles are assigned at all)
+    // Default member fallback (if no roles are assigned at all, OR if role is "member")
     // They can view channels and send messages by default
     basePerms.add(PERMISSIONS.VIEW_CHANNEL);
     basePerms.add(PERMISSIONS.SEND_MESSAGES);
@@ -588,6 +588,7 @@ exports.getModuleMessages = async (req, res) => {
     // ── 3. Private module check ──────────────────────────────────
     const perms = computePermissions(workspace, memberRecord, module);
     if (!perms.has(Workspace.PERMISSIONS.VIEW_CHANNEL)) {
+      console.warn(`[getModuleMessages] 403: User ${req.user.id} lacks VIEW_CHANNEL for module ${moduleId}. Perms:`, [...perms]);
       return res.status(403).json({ message: "Access denied to this module" });
     }
 
@@ -707,6 +708,17 @@ exports.sendModuleMessage = async (req, res) => {
     }
     if (!mongoose.Types.ObjectId.isValid(moduleId)) {
       return res.status(400).json({ message: "Invalid module ID" });
+    }
+
+    // ── 2. Inline membership check ───────────────────────────────
+    const result = await checkMembership(res, workspaceId, req.user.id);
+    if (!result) return;
+    const { workspace, memberRecord } = result;
+
+    // ── 2b. Fetch module ─────────────────────────────────────────
+    const module = await Module.findOne({ _id: moduleId, workspaceId });
+    if (!module) {
+      return res.status(404).json({ message: "Module not found" });
     }
 
     // ── 3. Check access & permissions ──────────────────────────────

@@ -279,7 +279,7 @@ router.patch(
 // @route   POST /api/workspaces/:workspaceId/join-public
 // @desc    Join a public workspace without an invite code
 // @access  Any authenticated user
-router.post("/:workspaceId/join-public", validateWorkspaceId, auth, joinPublicWorkspace);
+router.post("/:workspaceId/join-public", validateWorkspaceId, joinPublicWorkspace);
 
 // @route   GET /api/workspaces/:workspaceId/bans
 // @desc    List all banned users in a workspace
