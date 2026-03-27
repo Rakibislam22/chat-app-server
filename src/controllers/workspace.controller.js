@@ -965,7 +965,7 @@ exports.deleteCategory = async (req, res) => {
 exports.createRole = async (req, res) => {
   try {
     const workspace = req.workspace;
-    const { name, color, permissions } = req.body;
+    const { name, color, permissions, isHoisted } = req.body;
 
     if (!name || !name.trim()) {
       return res.status(400).json({ message: "Role name is required" });
