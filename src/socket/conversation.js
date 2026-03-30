@@ -249,7 +249,7 @@ const registerConversationHandlers = (socket, { emitToUser, io }) => {
           io.to(roomId).emit("message:new", payload);
           io.to(roomId).emit("conversation:customise:updated", {
             conversationId,
-            customisation: conversation.customisation,
+            customisation: conversation.toJSON().customisation,
           });
         }
       } catch (err) {
