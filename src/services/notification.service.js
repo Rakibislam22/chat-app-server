@@ -68,9 +68,10 @@ const NotificationService = {
       // Update existing grouped notification
       if (actorId && !notif.actors.some((a) => a.toString() === actorId.toString())) {
         notif.actors.push(actorId);
+        notif.actorCount += 1;
       }
-      notif.actorCount += 1;
       notif.data = { ...notif.data, ...data };
+      notif.markModified("data");
       await notif.save();
     } else {
       // Create new notification
