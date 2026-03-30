@@ -197,7 +197,7 @@ const registerConversationHandlers = (socket, { emitToUser, io }) => {
         } else {
           return;
         }
-
+        conversation.markModified("customisation");
         await conversation.save();
 
         const message = await Message.create({
@@ -225,8 +225,10 @@ const registerConversationHandlers = (socket, { emitToUser, io }) => {
         await Conversation.findByIdAndUpdate(
           conversationId,
           {
-            lastMessage: lastMessageUpdate,
-            updatedAt: message.createdAt,
+            $set: {
+              lastMessage: lastMessageUpdate,
+              updatedAt: message.createdAt,
+            },
             $inc: inc,
           }
         );
