@@ -2,6 +2,7 @@ const passport = require("passport");
 const GoogleStrategy = require("passport-google-oauth20").Strategy;
 const GitHubStrategy = require("passport-github2").Strategy;
 const User = require("../models/User");
+const { linkSocialAccountToExisting } = require("../services/accountMerge.service");
 
 // Google Strategy
 passport.use(
@@ -29,36 +30,20 @@ passport.use(
             if (avatar) avatar = avatar.replace(/=s\d+[^"']*/g, "");
 
             try {
-                // Find user by Google ID or Email
-                let user = await User.findOne({
-                    $or: [{ providerId: id }, { email }]
-                });
-
-                if (user) {
-                    // Always refresh avatar from the latest OAuth profile
-                    if (avatar) user.avatar = avatar;
-                    if (!user.providerId) {
-                        user.provider = "google";
-                        user.providerId = id;
-                        user.isVerified = true;
-                    }
-                    await user.save();
-                    return done(null, user);
-                }
-
-                // Create new user if they don't exist
-                user = new User({
-                    name: displayName || "Google User",
+                // Use account merge service to link/create user
+                const result = await linkSocialAccountToExisting(
                     email,
-                    avatar,
-                    provider: "google",
-                    providerId: id,
-                    isVerified: true,
-                });
+                    "google",
+                    id,
+                    { name: displayName, avatar, username: displayName }
+                );
 
-                await user.save();
-                console.log(`Created new Google user: ${email}`);
-                done(null, user);
+                // Attach merge info to user for OAuth callback to use
+                result.user._doc = result.user._doc || {};
+                result.user._doc.justMerged = result.merged;
+                result.user._doc.mergeMessage = result.message;
+
+                done(null, result.user);
             } catch (err) {
                 console.error("Google Auth Error:", err);
                 done(err, null);
@@ -123,37 +108,20 @@ passport.use(
             if (avatar) avatar = avatar.replace(/[?&]v=\d+/g, "").replace(/&s=\d+/g, "");
 
             try {
-                // Find user by GitHub ID or Email
-                let user = await User.findOne({
-                    $or: [{ providerId: id }, { email }]
-                });
-
-                if (user) {
-                    // Always refresh avatar from the latest OAuth profile so
-                    // stale/empty URLs self-heal on the next login.
-                    if (avatar) user.avatar = avatar;
-                    if (!user.providerId) {
-                        user.provider = "github";
-                        user.providerId = id;
-                        user.isVerified = true;
-                    }
-                    await user.save();
-                    return done(null, user);
-                }
-
-                // Create new user if they don't exist
-                user = new User({
-                    name: displayName || username || "GitHub User",
+                // Use account merge service to link/create user
+                const result = await linkSocialAccountToExisting(
                     email,
-                    avatar,
-                    provider: "github",
-                    providerId: id,
-                    isVerified: true,
-                });
+                    "github",
+                    id,
+                    { name: displayName || username || "GitHub User", avatar, username }
+                );
 
-                await user.save();
-                console.log(`Created new GitHub user: ${email}`);
-                done(null, user);
+                // Attach merge info to user for OAuth callback to use
+                result.user._doc = result.user._doc || {};
+                result.user._doc.justMerged = result.merged;
+                result.user._doc.mergeMessage = result.message;
+
+                done(null, result.user);
             } catch (err) {
                 console.error("GitHub Auth Error:", err);
                 done(err, null);

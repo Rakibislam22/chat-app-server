@@ -5,6 +5,7 @@ const { sendOTP } = require("../utility/email");
 const { redisClient } = require("../config/redis");
 const axios = require("axios");
 const FormData = require("form-data");
+const { linkSocialAccountToExisting } = require("../services/accountMerge.service");
 
 // @desc Register a new user
 exports.register = async (req, res) => {
@@ -430,5 +431,186 @@ exports.resendOTP = async (req, res) => {
   } catch (err) {
     console.error("resendOTP Error:", err.message);
     res.status(500).send("Server error");
+  }
+};
+
+// @desc Upload banner with crop data
+// @route PATCH /api/auth/me/banner
+// @body { image: File, cropData: { x, y, width, height } }
+exports.uploadBanner = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const user = await User.findById(userId);
+
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    // Check if image file is provided
+    if (!req.file) {
+      return res.status(400).json({ message: "No image provided" });
+    }
+
+    // Validate image size (< 5MB)
+    if (req.file.size > 5 * 1024 * 1024) {
+      return res.status(400).json({ message: "Image size must be less than 5MB" });
+    }
+
+    // Validate MIME type
+    const validMimes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+    if (!validMimes.includes(req.file.mimetype)) {
+      return res.status(400).json({ message: "Invalid image format. Use JPEG, PNG, GIF, or WebP" });
+    }
+
+    // Upload to ImgBB
+    const imgbbKey = process.env.IMGBB_API_KEY;
+    if (!imgbbKey) {
+      return res.status(500).json({ message: "Image upload service not configured" });
+    }
+
+    const formData = new FormData();
+    formData.append("image", req.file.buffer, {
+      filename: `banner_${userId}_${Date.now()}.${req.file.mimetype.split('/')[1]}`,
+      contentType: req.file.mimetype,
+    });
+
+    const imgbbResponse = await axios.post(
+      `https://api.imgbb.com/1/upload?key=${imgbbKey}`,
+      formData,
+      {
+        headers: formData.getHeaders(),
+      }
+    );
+
+    if (!imgbbResponse.data || !imgbbResponse.data.success) {
+      return res.status(500).json({ message: "Failed to upload image to storage" });
+    }
+
+    const bannerUrl = imgbbResponse.data.data.display_url;
+
+    // Parse crop data
+    let cropData = { x: 0, y: 0, width: 0, height: 0 };
+    if (req.body.cropData) {
+      try {
+        const parsed = typeof req.body.cropData === 'string'
+          ? JSON.parse(req.body.cropData)
+          : req.body.cropData;
+        cropData = {
+          x: parsed.x || 0,
+          y: parsed.y || 0,
+          width: parsed.width || 0,
+          height: parsed.height || 0,
+        };
+      } catch (e) {
+        console.warn("Failed to parse cropData, using defaults");
+      }
+    }
+
+    // Update user banner
+    user.banner = {
+      imageUrl: bannerUrl,
+      cropData,
+    };
+
+    await user.save();
+
+    res.json({
+      message: "Banner uploaded successfully",
+      banner: user.banner,
+    });
+  } catch (err) {
+    console.error("uploadBanner Error:", err.message);
+    res.status(500).json({ message: "Server error uploading banner" });
+  }
+};
+
+// @desc Connect GitHub account
+// @route POST /api/auth/me/connect/github
+// @body { code: string } (from GitHub OAuth flow)
+exports.connectGitHub = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { code } = req.body;
+
+    if (!code) {
+      return res.status(400).json({ message: "GitHub authorization code required" });
+    }
+
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    // Exchange code for GitHub access token (front-end should have already done this)
+    // For now, assume code is actually the GitHub username for testing
+    // In production, validate with GitHub API
+
+    user.socialConnections = user.socialConnections || {};
+    user.socialConnections.github = {
+      username: code, // In production: fetch from GitHub API
+      url: `https://github.com/${code}`,
+      connectedAt: new Date(),
+    };
+
+    await user.save();
+
+    res.json({
+      message: "GitHub connected successfully",
+      user: {
+        _id: user._id,
+        socialConnections: user.socialConnections,
+      },
+    });
+  } catch (err) {
+    console.error("connectGitHub Error:", err.message);
+    res.status(500).json({ message: "Server error connecting GitHub" });
+  }
+};
+
+// @desc Disconnect social provider
+// @route DELETE /api/auth/me/connect/:provider
+exports.disconnectProvider = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { provider } = req.params;
+
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    // Validate provider
+    if (!['github', 'google'].includes(provider)) {
+      return res.status(400).json({ message: "Invalid provider" });
+    }
+
+    // Check if user has password (local auth) or other providers
+    const hasLocalAuth = !!user.password;
+    const otherProviders = Object.keys(user.socialConnections || {}).filter(
+      (p) => p !== provider
+    );
+
+    if (!hasLocalAuth && otherProviders.length === 0) {
+      return res.status(400).json({
+        message: "Cannot disconnect the only login method. Set a password first or link another provider."
+      });
+    }
+
+    // Remove provider
+    if (user.socialConnections?.[provider]) {
+      delete user.socialConnections[provider];
+      await user.save();
+    }
+
+    res.json({
+      message: `${provider} disconnected successfully`,
+      user: {
+        _id: user._id,
+        socialConnections: user.socialConnections,
+      },
+    });
+  } catch (err) {
+    console.error("disconnectProvider Error:", err.message);
+    res.status(500).json({ message: "Server error" });
   }
 };
