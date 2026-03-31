@@ -380,7 +380,7 @@ exports.addMembers = async (req, res) => {
 
     await Workspace.findByIdAndUpdate(wsId, {
       $push: { members: { $each: newEntries } },
-    }, { new: true });
+    });
 
     const io = req.app.get("io");
     if (io) {
@@ -861,7 +861,7 @@ exports.addCategory = async (req, res) => {
     const updated = await Workspace.findByIdAndUpdate(
       req.workspace._id,
       { $push: { categories: newCategory } },
-      { returnDocument: 'after', runValidators: true },
+      { new: true, runValidators: true },
     );
 
     const added = updated.categories[updated.categories.length - 1];
@@ -916,7 +916,7 @@ exports.updateCategory = async (req, res) => {
       req.workspace._id,
       { $set: updateFields },
       {
-        returnDocument: 'after',
+        new: true,
         arrayFilters: [{ "cat._id": category._id }],
         runValidators: true,
       },
@@ -1000,7 +1000,7 @@ exports.createRole = async (req, res) => {
     const updated = await Workspace.findByIdAndUpdate(
       workspace._id,
       { $push: { roles: newRole } },
-      { returnDocument: 'after', runValidators: true },
+      { new: true, runValidators: true },
     );
     const addedRole = updated.roles[updated.roles.length - 1];
 
@@ -1051,7 +1051,7 @@ exports.updateRole = async (req, res) => {
     const updated = await Workspace.findByIdAndUpdate(
       workspace._id,
       { $set: updateFields },
-      { returnDocument: 'after', arrayFilters: [{ "r._id": role._id }] },
+      { new: true, runValidators: true, arrayFilters: [{ "r._id": role._id }] },
     );
     const updatedRole = updated.roles.id(roleId);
 

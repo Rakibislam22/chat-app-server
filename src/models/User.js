@@ -83,6 +83,13 @@ const userSchema = new mongoose.Schema(
     // ── Social Connections ──────────────────────────────────────────
     socialConnections: {
       github: {
+        providerId: String,
+        username: String,
+        url: String,
+        connectedAt: Date,
+      },
+      google: {
+        providerId: String,
         username: String,
         url: String,
         connectedAt: Date,

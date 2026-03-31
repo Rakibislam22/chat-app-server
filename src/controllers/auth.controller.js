@@ -5,7 +5,6 @@ const { sendOTP } = require("../utility/email");
 const { redisClient } = require("../config/redis");
 const axios = require("axios");
 const FormData = require("form-data");
-const { linkSocialAccountToExisting } = require("../services/accountMerge.service");
 
 // @desc Register a new user
 exports.register = async (req, res) => {
@@ -254,10 +253,10 @@ exports.updateMe = async (req, res) => {
     }
 
     if (bio !== undefined) {
-      if (bio.length > 160)
+      if (bio.length > 500)
         return res
           .status(400)
-          .json({ message: "Bio must be 160 characters or fewer" });
+          .json({ message: "Bio must be 500 characters or fewer" });
       user.bio = bio.trim();
     }
 
@@ -451,16 +450,7 @@ exports.uploadBanner = async (req, res) => {
       return res.status(400).json({ message: "No image provided" });
     }
 
-    // Validate image size (< 5MB)
-    if (req.file.size > 5 * 1024 * 1024) {
-      return res.status(400).json({ message: "Image size must be less than 5MB" });
-    }
-
-    // Validate MIME type
-    const validMimes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
-    if (!validMimes.includes(req.file.mimetype)) {
-      return res.status(400).json({ message: "Invalid image format. Use JPEG, PNG, GIF, or WebP" });
-    }
+    // Note: Size and MIME type validation is handled by multer middleware
 
     // Upload to ImgBB
     const imgbbKey = process.env.IMGBB_API_KEY;
@@ -541,14 +531,43 @@ exports.connectGitHub = async (req, res) => {
       return res.status(404).json({ message: "User not found" });
     }
 
-    // Exchange code for GitHub access token (front-end should have already done this)
-    // For now, assume code is actually the GitHub username for testing
-    // In production, validate with GitHub API
+    // Exchange authorization code for access token
+    const tokenResponse = await axios.post(
+      "https://github.com/login/oauth/access_token",
+      {
+        client_id: process.env.GITHUB_CLIENT_ID,
+        client_secret: process.env.GITHUB_CLIENT_SECRET,
+        code,
+      },
+      {
+        headers: { Accept: "application/json" },
+      }
+    );
 
+    if (!tokenResponse.data || !tokenResponse.data.access_token) {
+      return res.status(400).json({ message: "Failed to obtain GitHub access token" });
+    }
+
+    const accessToken = tokenResponse.data.access_token;
+
+    // Fetch GitHub user profile
+    const profileResponse = await axios.get("https://api.github.com/user", {
+      headers: {
+        Authorization: `token ${accessToken}`,
+        "User-Agent": "ConvoX-Server",
+      },
+    });
+
+    const githubProfile = profileResponse.data;
+    const providerId = String(githubProfile.id);
+    const username = githubProfile.login;
+
+    // Update user's social connections
     user.socialConnections = user.socialConnections || {};
     user.socialConnections.github = {
-      username: code, // In production: fetch from GitHub API
-      url: `https://github.com/${code}`,
+      providerId,
+      username,
+      url: githubProfile.html_url || `https://github.com/${username}`,
       connectedAt: new Date(),
     };
 
@@ -562,7 +581,10 @@ exports.connectGitHub = async (req, res) => {
       },
     });
   } catch (err) {
-    console.error("connectGitHub Error:", err.message);
+    console.error("connectGitHub Error:", err.response?.data || err.message);
+    if (err.response?.status === 401) {
+      return res.status(400).json({ message: "Invalid or expired authorization code" });
+    }
     res.status(500).json({ message: "Server error connecting GitHub" });
   }
 };
@@ -574,33 +596,14 @@ exports.disconnectProvider = async (req, res) => {
     const userId = req.user.id;
     const { provider } = req.params;
 
-    const user = await User.findById(userId);
-    if (!user) {
-      return res.status(404).json({ message: "User not found" });
-    }
-
     // Validate provider
     if (!['github', 'google'].includes(provider)) {
       return res.status(400).json({ message: "Invalid provider" });
     }
 
-    // Check if user has password (local auth) or other providers
-    const hasLocalAuth = !!user.password;
-    const otherProviders = Object.keys(user.socialConnections || {}).filter(
-      (p) => p !== provider
-    );
-
-    if (!hasLocalAuth && otherProviders.length === 0) {
-      return res.status(400).json({
-        message: "Cannot disconnect the only login method. Set a password first or link another provider."
-      });
-    }
-
-    // Remove provider
-    if (user.socialConnections?.[provider]) {
-      delete user.socialConnections[provider];
-      await user.save();
-    }
+    // Use accountMerge service for consistent logic
+    const { disconnectProvider: disconnect } = require("../services/accountMerge.service");
+    const user = await disconnect(userId, provider);
 
     res.json({
       message: `${provider} disconnected successfully`,
@@ -611,6 +614,12 @@ exports.disconnectProvider = async (req, res) => {
     });
   } catch (err) {
     console.error("disconnectProvider Error:", err.message);
+    if (err.message.includes("Cannot disconnect")) {
+      return res.status(400).json({ message: err.message });
+    }
+    if (err.message === "User not found") {
+      return res.status(404).json({ message: err.message });
+    }
     res.status(500).json({ message: "Server error" });
   }
 };

@@ -39,9 +39,8 @@ passport.use(
                 );
 
                 // Attach merge info to user for OAuth callback to use
-                result.user._doc = result.user._doc || {};
-                result.user._doc.justMerged = result.merged;
-                result.user._doc.mergeMessage = result.message;
+                result.user.justMerged = result.merged;
+                result.user.mergeMessage = result.message;
 
                 done(null, result.user);
             } catch (err) {
@@ -89,7 +88,9 @@ passport.use(
 
                         if (primaryEmail) {
                             email = primaryEmail.email;
-                            console.log(`Fetched private email for ${username}: ${email}`);
+                            if (process.env.NODE_ENV !== "production") {
+                                console.log(`Fetched private email for ${username}`);
+                            }
                         }
                     }
                 } catch (fetchErr) {
@@ -117,9 +118,8 @@ passport.use(
                 );
 
                 // Attach merge info to user for OAuth callback to use
-                result.user._doc = result.user._doc || {};
-                result.user._doc.justMerged = result.merged;
-                result.user._doc.mergeMessage = result.message;
+                result.user.justMerged = result.merged;
+                result.user.mergeMessage = result.message;
 
                 done(null, result.user);
             } catch (err) {

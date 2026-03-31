@@ -76,8 +76,9 @@ const computePermissions = (workspace, memberRecord, module) => {
     // Legacy support for pure 'admin' string role
     basePerms.add(PERMISSIONS.ADMINISTRATOR);
   } else {
-    // Default member fallback (if no roles are assigned at all, OR if role is "member")
-    // They can view channels and send messages by default
+    // Default member fallback
+    // This runs when roleIds is empty AND role is not "admin" or "owner"
+    // Basic members can view channels and send messages by default
     basePerms.add(PERMISSIONS.VIEW_CHANNEL);
     basePerms.add(PERMISSIONS.SEND_MESSAGES);
   }
@@ -590,7 +591,9 @@ exports.getModuleMessages = async (req, res) => {
     // ── 3. Private module check ──────────────────────────────────
     const perms = computePermissions(workspace, memberRecord, module);
     if (!perms.has(Workspace.PERMISSIONS.VIEW_CHANNEL)) {
-      console.warn(`[getModuleMessages] 403: User ${req.user.id} lacks VIEW_CHANNEL for module ${moduleId}. Perms:`, [...perms]);
+      if (process.env.DEBUG_PERMS) {
+        console.log(`[getModuleMessages] Access denied for module ${moduleId}`);
+      }
       return res.status(403).json({ message: "Access denied to this module" });
     }
 

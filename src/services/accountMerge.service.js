@@ -136,10 +136,10 @@ async function disconnectProvider(userId, provider) {
         throw new Error("User not found");
     }
 
-    // Check if user has password (local auth) or other providers
+    // Check if user has password (local auth) or other providers with meaningful content
     const hasLocalAuth = !!user.password;
     const otherProviders = Object.keys(user.socialConnections || {}).filter(
-        (p) => p !== provider
+        (p) => p !== provider && user.socialConnections[p]?.providerId
     );
 
     if (!hasLocalAuth && otherProviders.length === 0) {
