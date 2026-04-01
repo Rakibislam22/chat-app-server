@@ -216,6 +216,57 @@ exports.login = async (req, res) => {
 // @desc OAuth Callback
 exports.oauthCallback = async (req, res) => {
   try {
+    // Check if this is a social account linking flow
+    const state = req.query.state;
+    let isLinking = false;
+    let linkUserId = null;
+    
+    if (state && global.linkStates) {
+      const stateData = global.linkStates.get(state);
+      if (stateData && stateData.action === "link") {
+        isLinking = true;
+        linkUserId = stateData.userId;
+        // Clean up the used state
+        global.linkStates.delete(state);
+      }
+    }
+    
+    // Handle account linking flow
+    if (isLinking && linkUserId) {
+      const User = require("../models/User");
+      const user = await User.findById(linkUserId);
+      
+      if (!user) {
+        return res.redirect(`${process.env.SITE_URL}/login-error?message=User not found`);
+      }
+      
+      // Get provider info from passport
+      const provider = req.user.provider || (req.user.google?.providerId ? "google" : "github");
+      const providerId = req.user.providerId || 
+        (req.user.google?.providerId) || 
+        (req.user.github?.providerId) ||
+        req.user.id;
+      const providerUsername = req.user.displayName || req.user.username || "";
+      
+      // Link the social account to the existing user
+      if (!user.socialConnections) user.socialConnections = {};
+      user.socialConnections[provider] = {
+        providerId: providerId,
+        username: providerUsername,
+        url: provider === "google" 
+          ? `https://accounts.google.com/${providerId}`
+          : `https://github.com/${providerUsername}`,
+        connectedAt: new Date()
+      };
+      
+      await user.save();
+      
+      // Generate token for the existing user and redirect to profile
+      const token = generateToken(user);
+      return res.redirect(`${process.env.SITE_URL}/login-success?token=${token}&linked=${provider}&linked=true`);
+    }
+    
+    // Normal login flow
     const token = generateToken(req.user);
     
     // Build redirect URL with optional merge info

@@ -24,6 +24,7 @@ const uploadRoutes = require("./src/routes/upload.routes");
 const callRoutes = require("./src/routes/calls.routes");
 const notificationRoutes = require("./src/routes/notification.routes");
 const wordspyRoutes = require("./src/routes/WordSpy/wordspy.routes");
+const userRoutes = require("./src/routes/user.routes");
 const mongoose = require("mongoose");
 
 const port = process.env.PORT || 3000;
@@ -76,14 +77,11 @@ app.use("/api/feed", feedApiRoutes);
 // Scheduled Message Routes
 app.use("/api/messages", scheduleRoutes);
 
-// Upload (R2 presign)
-app.use("/api/upload", uploadRoutes);
-
-// Call Routes
-app.use("/api/calls", callRoutes);
-
 // Notification Routes
 app.use("/api/notifications", notificationRoutes);
+
+// User Routes
+app.use("/api/user", userRoutes);
 
 // Word Spy Routes
 app.use("/api/wordspy", wordspyRoutes);
