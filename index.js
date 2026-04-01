@@ -80,6 +80,9 @@ app.use("/api/messages", scheduleRoutes);
 // Notification Routes
 app.use("/api/notifications", notificationRoutes);
 
+// Calls Routes
+app.use("/api/calls", callRoutes);
+
 // User Routes
 app.use("/api/user", userRoutes);
 
