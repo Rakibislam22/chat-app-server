@@ -108,6 +108,37 @@ const registerMessageHandlers = (socket, { emitToUser, isUserOnline, io }) => {
         }
 
         const isGroup = conversation.type === "group";
+        const safeText = text?.trim() || "";
+
+        let groupMentionIds = [];
+        let populatedParticipants = [];
+
+        if (isGroup) {
+          const participantIds = conversation.participants.map((p) =>
+            p.toString(),
+          );
+          const mentionIdsFromPayload = sanitizeMentionIds(
+            mentions,
+            participantIds,
+            socket.userId,
+          );
+
+          populatedParticipants = await User.find({
+            _id: { $in: conversation.participants },
+          })
+            .select("_id name")
+            .lean();
+
+          const mentionIdsFromText = await parseMentions(
+            safeText,
+            populatedParticipants,
+            socket.userId,
+          );
+
+          groupMentionIds = Array.from(
+            new Set([...mentionIdsFromPayload, ...mentionIdsFromText]),
+          );
+        }
 
         // DMs must supply a receiverId
         if (!isGroup && !receiverId) {
@@ -124,8 +155,9 @@ const registerMessageHandlers = (socket, { emitToUser, isUserOnline, io }) => {
           status: "sent",
           replyTo: replyTo || null,
           attachments: attachments || [],
+          mentions: isGroup ? groupMentionIds : [],
         };
-        if (text?.trim()) messageData.text = text.trim();
+        if (safeText) messageData.text = safeText;
         if (gifUrl) messageData.gifUrl = gifUrl;
 
         const message = await Message.create(messageData);
@@ -161,7 +193,7 @@ const registerMessageHandlers = (socket, { emitToUser, isUserOnline, io }) => {
 
         // ── Update lastMessage + unreadCount ────────────────────────
         const lastMessageUpdate = {
-          text: gifUrl ? "GIF" : text?.trim() || "",
+          text: gifUrl ? "GIF" : safeText,
           sender: socket.userId,
           timestamp: message.createdAt,
           gifUrl: gifUrl || null,
@@ -204,6 +236,7 @@ const registerMessageHandlers = (socket, { emitToUser, isUserOnline, io }) => {
           receiverId: isGroup ? null : receiverId,
           text: message.text,
           gifUrl: message.gifUrl,
+          mentions: message.mentions || [],
           attachments: message.attachments,
           replyTo: message.replyTo || null,
           status: message.status,
@@ -254,30 +287,7 @@ const registerMessageHandlers = (socket, { emitToUser, isUserOnline, io }) => {
           }
 
           // ── Notifications ────────────────────────────────────────
-          // Populate participants to resolve @mention names
-          const populatedParticipants = await User.find({
-            _id: { $in: conversation.participants },
-          })
-            .select("_id name")
-            .lean();
-
-          const participantIds = conversation.participants.map((p) =>
-            p.toString(),
-          );
-          const mentionIdsFromPayload = sanitizeMentionIds(
-            mentions,
-            participantIds,
-            socket.userId,
-          );
-          const mentionIdsFromText = await parseMentions(
-            text,
-            populatedParticipants,
-            socket.userId,
-          );
-          const mentionedIds = Array.from(
-            new Set([...mentionIdsFromPayload, ...mentionIdsFromText]),
-          );
-          const mentionedSet = new Set(mentionedIds);
+          const mentionedSet = new Set(groupMentionIds);
 
           const { emitToUser: emitFn } = createHelpers(io);
 
@@ -358,36 +368,11 @@ const registerMessageHandlers = (socket, { emitToUser, isUserOnline, io }) => {
         }
 
         // ── Notification ─────────────────────────────────────────
+        // Mentions are intentionally group-only; DMs always use chat_message.
         const { emitToUser: emitFn } = createHelpers(io);
-        const mentionIdsFromPayload = sanitizeMentionIds(
-          mentions,
-          [receiverId],
-          socket.userId,
-        );
-
-        let receiverWasMentioned = mentionIdsFromPayload.includes(
-          receiverId.toString(),
-        );
-
-        if (!receiverWasMentioned && text?.includes("@")) {
-          const receiver = await User.findById(receiverId)
-            .select("_id name")
-            .lean();
-          if (receiver) {
-            const mentionIdsFromText = await parseMentions(
-              text,
-              [receiver],
-              socket.userId,
-            );
-            receiverWasMentioned = mentionIdsFromText.includes(
-              receiverId.toString(),
-            );
-          }
-        }
-
         await NotificationService.push(emitFn, {
           recipientId: receiverId,
-          type: receiverWasMentioned ? "chat_mention" : "chat_message",
+          type: "chat_message",
           actorId: socket.userId,
           data: { conversationId },
         });
