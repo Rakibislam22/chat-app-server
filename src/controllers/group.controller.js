@@ -37,7 +37,8 @@ const formatHumanList = (names = []) => {
   if (clean.length === 0) return "members";
   if (clean.length === 1) return clean[0];
   if (clean.length === 2) return `${clean[0]} and ${clean[1]}`;
-  return `${clean[0]}, ${clean[1]} and ${clean.length - 2} others`;
+  const remainder = clean.length - 2;
+  return `${clean[0]}, ${clean[1]} and ${remainder} ${remainder === 1 ? "other" : "others"}`;
 };
 
 const emitGroupSystemMessage = async ({
@@ -49,54 +50,61 @@ const emitGroupSystemMessage = async ({
   io,
 }) => {
   if (!conversationId || !actorId || !text) return;
-
-  const message = await Message.create({
-    conversationId,
-    sender: actorId,
-    text,
-    isSystem: true,
-    systemAction,
-  });
-
-  const populatedMessage = await Message.findById(message._id).populate(
-    "sender",
-    "name avatar",
-  );
-
-  const inc = {};
-  (recipientIds || []).forEach((id) => {
-    if (id?.toString() !== actorId.toString()) {
-      inc[`unreadCount.${id}`] = 1;
-    }
-  });
-
-  const update = {
-    $set: {
-      lastMessage: {
-        text,
-        sender: actorId,
-        timestamp: message.createdAt,
-      },
-      updatedAt: message.createdAt,
-    },
-  };
-
-  if (Object.keys(inc).length > 0) {
-    update.$inc = inc;
-  }
-
-  await Conversation.findByIdAndUpdate(conversationId, update);
-
-  if (io) {
-    io.to(`conv:${conversationId}`).emit("message:new", {
-      _id: message._id,
+  try {
+    const message = await Message.create({
       conversationId,
-      sender: populatedMessage?.sender || null,
+      sender: actorId,
       text,
       isSystem: true,
       systemAction,
-      createdAt: message.createdAt,
     });
+
+    const populatedMessage = await Message.findById(message._id).populate(
+      "sender",
+      "name avatar",
+    );
+
+    const inc = {};
+    (recipientIds || []).forEach((id) => {
+      if (id?.toString() !== actorId.toString()) {
+        inc[`unreadCount.${id}`] = 1;
+      }
+    });
+
+    const update = {
+      $set: {
+        lastMessage: {
+          text,
+          sender: actorId,
+          timestamp: message.createdAt,
+        },
+        updatedAt: message.createdAt,
+      },
+    };
+
+    if (Object.keys(inc).length > 0) {
+      update.$inc = inc;
+    }
+
+    await Conversation.findByIdAndUpdate(conversationId, update);
+
+    if (io) {
+      io.to(`conv:${conversationId}`).emit("message:new", {
+        _id: message._id,
+        conversationId,
+        sender: populatedMessage?.sender || null,
+        text,
+        isSystem: true,
+        systemAction,
+        createdAt: message.createdAt,
+      });
+    }
+  } catch (err) {
+    console.error(
+      "[emitGroupSystemMessage] non-fatal error:",
+      err?.message || err,
+    );
+    return;
   }
 };
 
