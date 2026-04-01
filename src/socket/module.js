@@ -113,7 +113,7 @@ const registerModuleHandlers = (socket, { emitToUser, io }) => {
         );
         const isAdmin =
           memberRecord?.role === "owner" || memberRecord?.role === "admin";
-        const isAllowed = mod.allowedMembers
+        const isAllowed = (mod.allowedMembers || [])
           .map(String)
           .includes(socket.userId);
         const roleAllowed = mod.allowedRoles?.some((roleId) =>
@@ -178,7 +178,7 @@ const registerModuleHandlers = (socket, { emitToUser, io }) => {
         if (mod.isPrivate) {
           const isAdmin =
             memberRecord.role === "owner" || memberRecord.role === "admin";
-          const isAllowed = mod.allowedMembers
+          const isAllowed = (mod.allowedMembers || [])
             .map(String)
             .includes(socket.userId);
           const roleAllowed = mod.allowedRoles?.some((roleId) =>
@@ -349,6 +349,11 @@ const registerModuleHandlers = (socket, { emitToUser, io }) => {
               moduleId,
               workspaceId,
               unreadCount,
+              lastMessage: {
+                text: gifUrl ? "GIF" : safeMessageText,
+                sender: socket.userId,
+                timestamp: message.createdAt,
+              },
             });
           }
         }
@@ -620,7 +625,7 @@ const registerModuleHandlers = (socket, { emitToUser, io }) => {
         );
         const isAdmin =
           memberRecord?.role === "owner" || memberRecord?.role === "admin";
-        const isAllowed = mod.allowedMembers
+        const isAllowed = (mod.allowedMembers || [])
           .map(String)
           .includes(socket.userId);
         const roleAllowed = mod.allowedRoles?.some((roleId) =>
@@ -636,6 +641,7 @@ const registerModuleHandlers = (socket, { emitToUser, io }) => {
     const typingPayload = {
       moduleId,
       userId: socket.userId,
+      userName: socket.userName || "Someone",
       isTyping: true,
     };
 
@@ -671,6 +677,7 @@ const registerModuleHandlers = (socket, { emitToUser, io }) => {
     socket.to(`module:${moduleId}`).emit("module:typing:update", {
       moduleId,
       userId: socket.userId,
+      userName: socket.userName || "Someone",
       isTyping: false,
     });
   });
@@ -701,7 +708,7 @@ const registerModuleHandlers = (socket, { emitToUser, io }) => {
         );
         const isAdmin =
           memberRecord?.role === "owner" || memberRecord?.role === "admin";
-        const isAllowed = mod.allowedMembers
+        const isAllowed = (mod.allowedMembers || [])
           .map(String)
           .includes(socket.userId);
         const roleAllowed = mod.allowedRoles?.some((roleId) =>
@@ -720,34 +727,6 @@ const registerModuleHandlers = (socket, { emitToUser, io }) => {
         moduleId,
         workspaceId: mod.workspaceId,
         unreadCount: 0,
-      });
-
-      if (!lastSeenMessageId) return;
-
-      // Find pivot message timestamp for range update
-      const pivot = await ModuleMessage.findOne({
-        _id: lastSeenMessageId,
-        moduleId,
-      }).select("createdAt");
-      if (!pivot) return;
-
-      const seenAt = new Date();
-
-      // Mark all messages up to pivot as read by this user
-      await ModuleMessage.updateMany(
-        {
-          moduleId,
-          "readBy.user": { $ne: socket.userId },
-          createdAt: { $lte: pivot.createdAt },
-        },
-        { $addToSet: { readBy: { user: socket.userId, readAt: seenAt } } },
-      );
-
-      io.to(`module:${moduleId}`).emit("module:message:status", {
-        moduleId,
-        status: "read",
-        upToMessageId: lastSeenMessageId,
-        readBy: { userId: socket.userId, readAt: seenAt },
       });
     } catch (err) {
       console.error("module:seen error:", err.message);
