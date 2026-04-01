@@ -113,12 +113,18 @@ passport.use(
             // If no email in profile (happens with private emails), fetch from GitHub API
             if (!email && accessToken) {
                 try {
+                    const controller = new AbortController();
+                    const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
+                    
                     const response = await fetch("https://api.github.com/user/emails", {
                         headers: {
                             Authorization: `token ${accessToken}`,
                             "User-Agent": "ConvoX-Server",
                         },
+                        signal: controller.signal,
                     });
+                    
+                    clearTimeout(timeoutId);
                     const fetchedEmails = await response.json();
 
                     if (Array.isArray(fetchedEmails)) {

@@ -216,18 +216,29 @@ exports.login = async (req, res) => {
 // @desc OAuth Callback
 exports.oauthCallback = async (req, res) => {
   try {
-    // Check if this is a social account linking flow
+    // Handle OAuth cancellation/denial
+    const error = req.query.error;
+    const errorDescription = req.query.error_description || req.query.error_message;
+    
+    if (error === "access_denied" || error === "cancelled") {
+      // User cancelled the OAuth flow
+      return res.redirect(`${process.env.SITE_URL}/profile?tab=connections&cancelled=true`);
+    }
+    
+    // Check if this is a social account linking flow using new OAuth state validation
     const state = req.query.state;
     let isLinking = false;
     let linkUserId = null;
+    let linkingProvider = null;
     
-    if (state && global.linkStates) {
-      const stateData = global.linkStates.get(state);
-      if (stateData && stateData.action === "link") {
+    if (state) {
+      const { validateOAuthLinkState } = require("../utils/oauthState");
+      const validation = await validateOAuthLinkState(state);
+      
+      if (validation.valid && validation.data) {
         isLinking = true;
-        linkUserId = stateData.userId;
-        // Clean up the used state
-        global.linkStates.delete(state);
+        linkUserId = validation.data.userId;
+        linkingProvider = validation.data.provider;
       }
     }
     
@@ -240,13 +251,26 @@ exports.oauthCallback = async (req, res) => {
         return res.redirect(`${process.env.SITE_URL}/login-error?message=User not found`);
       }
       
-      // Get provider info from passport
-      const provider = req.user.provider || (req.user.google?.providerId ? "google" : "github");
-      const providerId = req.user.providerId || 
-        (req.user.google?.providerId) || 
-        (req.user.github?.providerId) ||
-        req.user.id;
-      const providerUsername = req.user.displayName || req.user.username || "";
+      // Get provider info from passport - be more robust in detecting provider
+      let provider = linkingProvider;
+      let providerId = null;
+      let providerUsername = null;
+      
+      // Try to determine provider from passport profile
+      if (req.user.google && req.user.google.id) {
+        provider = "google";
+        providerId = req.user.google.id;
+        providerUsername = req.user.displayName || req.user.google.displayName || "";
+      } else if (req.user.github && req.user.github.id) {
+        provider = "github";
+        providerId = req.user.github.id;
+        providerUsername = req.user.username || req.user.displayName || "";
+      } else if (req.user.id) {
+        // Fallback: try to guess from the OAuth response
+        provider = linkingProvider || "github"; // default to github if can't determine
+        providerId = req.user.id;
+        providerUsername = req.user.displayName || req.user.username || "";
+      }
       
       // Link the social account to the existing user
       if (!user.socialConnections) user.socialConnections = {};
@@ -286,7 +310,7 @@ exports.oauthCallback = async (req, res) => {
     
     res.redirect(redirectUrl);
   } catch (err) {
-    console.error(err.message);
+    console.error("OAuth callback error:", err.message);
     res.status(500).send("Server error");
   }
 };

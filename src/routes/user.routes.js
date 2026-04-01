@@ -4,12 +4,21 @@ const auth = require("../middleware/auth.middleware");
 const User = require("../models/User");
 const axios = require("axios");
 const FormData = require("form-data");
-const crypto = require("crypto");
+const { createOAuthLinkState } = require("../utils/oauthState");
+const { createRateLimiter } = require("../utils/rateLimiter");
+
+// Rate limiter for social link initiation (stricter: 3 per hour per user)
+const socialLinkRateLimiter = createRateLimiter({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  maxRequests: 3,
+  keyGenerator: (req) => `social_link:${req.user?.id || req.ip}`,
+  message: "Too many account linking attempts. Please try again later."
+});
 
 // @route   POST /api/user/social-links/init/:provider
 // @desc    Initiate social account linking (returns OAuth URL)
 // @access  Private
-router.post("/social-links/init/:provider", auth, async (req, res) => {
+router.post("/social-links/init/:provider", socialLinkRateLimiter, auth, async (req, res) => {
   try {
     const { provider } = req.params;
     const validProviders = ["google", "github"];
@@ -18,32 +27,8 @@ router.post("/social-links/init/:provider", auth, async (req, res) => {
       return res.status(400).json({ message: "Invalid provider" });
     }
 
-    // Generate a secure state token that includes the user ID for linking
-    const state = crypto.randomBytes(32).toString("hex");
-    const stateData = {
-      state,
-      userId: req.user.id,
-      action: "link",
-      provider
-    };
-
-    // Store state in a temporary in-memory map (in production, use Redis)
-    if (!global.linkStates) global.linkStates = new Map();
-    global.linkStates.set(state, stateData);
-
-    let authUrl;
-    const baseUrl = process.env.BASE_URL || "http://localhost:5000";
-    const callbackUrl = `${baseUrl}/api/auth/${provider}/callback`;
-
-    if (provider === "google") {
-      const clientId = process.env.GOOGLE_CLIENT_ID;
-      const scopes = encodeURIComponent("openid email profile");
-      authUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${clientId}&redirect_uri=${encodeURIComponent(callbackUrl)}&response_type=code&scope=${scopes}&state=${state}&access_type=offline&prompt=consent`;
-    } else if (provider === "github") {
-      const clientId = process.env.GITHUB_CLIENT_ID;
-      const scopes = encodeURIComponent("user:email");
-      authUrl = `https://github.com/login/oauth/authorize?client_id=${clientId}&redirect_uri=${encodeURIComponent(callbackUrl)}&scope=${scopes}&state=${state}`;
-    }
+    // Generate OAuth state with Redis-backed storage and TTL
+    const { state, authUrl } = await createOAuthLinkState(req.user.id, provider);
 
     res.json({ authUrl });
   } catch (err) {
