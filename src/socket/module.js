@@ -630,34 +630,6 @@ const registerModuleHandlers = (socket, { emitToUser, io }) => {
         workspaceId: mod.workspaceId,
         unreadCount: 0,
       });
-
-      if (!lastSeenMessageId) return;
-
-      // Find pivot message timestamp for range update
-      const pivot = await ModuleMessage.findOne({
-        _id: lastSeenMessageId,
-        moduleId,
-      }).select("createdAt");
-      if (!pivot) return;
-
-      const seenAt = new Date();
-
-      // Mark all messages up to pivot as read by this user
-      await ModuleMessage.updateMany(
-        {
-          moduleId,
-          "readBy.user": { $ne: socket.userId },
-          createdAt: { $lte: pivot.createdAt },
-        },
-        { $addToSet: { readBy: { user: socket.userId, readAt: seenAt } } },
-      );
-
-      io.to(`module:${moduleId}`).emit("module:message:status", {
-        moduleId,
-        status: "read",
-        upToMessageId: lastSeenMessageId,
-        readBy: { userId: socket.userId, readAt: seenAt },
-      });
     } catch (err) {
       console.error("module:seen error:", err.message);
     }

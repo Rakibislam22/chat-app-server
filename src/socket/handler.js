@@ -52,14 +52,16 @@ const socketHandler = (io) => {
       return;
     }
 
-    // Cache display name on the socket for lightweight event payloads
+    // Cache basic profile on the socket for lightweight event payloads
     try {
       const currentUser = await User.findById(socket.userId)
-        .select("name username")
+        .select("name username avatar")
         .lean();
       socket.userName = currentUser?.name || currentUser?.username || "Someone";
+      socket.userAvatar = currentUser?.avatar || null;
     } catch (err) {
       socket.userName = "Someone";
+      socket.userAvatar = null;
       console.error("Socket user profile lookup error:", err.message);
     }
 
