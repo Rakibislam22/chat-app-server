@@ -73,7 +73,7 @@ const registerModuleHandlers = (socket, { emitToUser, io }) => {
         );
         const isAdmin =
           memberRecord?.role === "owner" || memberRecord?.role === "admin";
-        const isAllowed = mod.allowedMembers
+        const isAllowed = (mod.allowedMembers || [])
           .map(String)
           .includes(socket.userId);
         const roleAllowed = mod.allowedRoles?.some((roleId) =>
@@ -125,7 +125,7 @@ const registerModuleHandlers = (socket, { emitToUser, io }) => {
         if (mod.isPrivate) {
           const isAdmin =
             memberRecord.role === "owner" || memberRecord.role === "admin";
-          const isAllowed = mod.allowedMembers
+          const isAllowed = (mod.allowedMembers || [])
             .map(String)
             .includes(socket.userId);
           const roleAllowed = mod.allowedRoles?.some((roleId) =>
@@ -175,7 +175,7 @@ const registerModuleHandlers = (socket, { emitToUser, io }) => {
             $inc: { replyCount: 1 },
             $set: { lastReplyAt: message.createdAt },
           }, { new: true });
-          
+
           // Emit thread update to the room
           io.to(`module:${moduleId}`).emit("module:message:thread:update", {
             messageId: replyTo,
@@ -256,6 +256,11 @@ const registerModuleHandlers = (socket, { emitToUser, io }) => {
               moduleId,
               workspaceId,
               unreadCount,
+              lastMessage: {
+                text: gifUrl ? "GIF" : safeMessageText,
+                sender: socket.userId,
+                timestamp: message.createdAt,
+              },
             });
           }
         }
@@ -463,7 +468,7 @@ const registerModuleHandlers = (socket, { emitToUser, io }) => {
       if (!memberRecord) return;
 
       const isAdmin = memberRecord.role === "owner" || memberRecord.role === "admin";
-      
+
       const hasManageMessages = (workspace.roles || [])
         .filter((r) => memberRecord.roleIds?.map(String).includes(r._id.toString()))
         .some((r) => r.permissions?.includes("MANAGE_MESSAGES"));
@@ -522,7 +527,7 @@ const registerModuleHandlers = (socket, { emitToUser, io }) => {
         );
         const isAdmin =
           memberRecord?.role === "owner" || memberRecord?.role === "admin";
-        const isAllowed = mod.allowedMembers
+        const isAllowed = (mod.allowedMembers || [])
           .map(String)
           .includes(socket.userId);
         const roleAllowed = mod.allowedRoles?.some((roleId) =>
@@ -538,6 +543,7 @@ const registerModuleHandlers = (socket, { emitToUser, io }) => {
     const typingPayload = {
       moduleId,
       userId: socket.userId,
+      userName: socket.userName || "Someone",
       isTyping: true,
     };
 
@@ -573,6 +579,7 @@ const registerModuleHandlers = (socket, { emitToUser, io }) => {
     socket.to(`module:${moduleId}`).emit("module:typing:update", {
       moduleId,
       userId: socket.userId,
+      userName: socket.userName || "Someone",
       isTyping: false,
     });
   });
@@ -603,7 +610,7 @@ const registerModuleHandlers = (socket, { emitToUser, io }) => {
         );
         const isAdmin =
           memberRecord?.role === "owner" || memberRecord?.role === "admin";
-        const isAllowed = mod.allowedMembers
+        const isAllowed = (mod.allowedMembers || [])
           .map(String)
           .includes(socket.userId);
         const roleAllowed = mod.allowedRoles?.some((roleId) =>
