@@ -196,7 +196,7 @@ exports.getWorkspace = async (req, res) => {
     const workspace = req.workspace; // attached by loadWorkspace
 
     await workspace.populate([
-      { path: "members.user", select: "name avatar email" },
+      { path: "members.user", select: "name avatar email banner statusMessage" },
       { path: "createdBy", select: "name avatar" },
     ]);
 
@@ -720,7 +720,7 @@ exports.getWorkspaceByInvite = async (req, res) => {
     const { inviteCode } = req.params;
     const workspace = await Workspace.findOne({ inviteCode })
       .select("name avatar description members inviteCodeExpiresAt")
-      .populate("members.user", "name avatar");
+      .populate("members.user", "name avatar email banner statusMessage");
 
     if (!workspace) {
       return res.status(404).json({ message: "Invalid or expired invite link" });
