@@ -394,6 +394,21 @@ exports.updateMe = async (req, res) => {
 
     await user.save();
 
+    // Emit real-time update if statusMessage changed
+    if (statusMessage !== undefined) {
+      try {
+        const io = req.app.get("io");
+        if (io) {
+          io.emit("user:status:updated", {
+            userId: user._id.toString(),
+            statusMessage: user.statusMessage
+          });
+        }
+      } catch (e) {
+        console.error("Failed to emit status update:", e.message);
+      }
+    }
+
     const { password: _pw, ...safeUser } = user.toObject();
     res.json(safeUser);
   } catch (err) {
