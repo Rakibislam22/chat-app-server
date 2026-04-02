@@ -125,6 +125,7 @@ exports.listMyWorkspaces = async (req, res) => {
         _id: ws._id,
         name: ws.name,
         avatar: ws.avatar,
+        banner: ws.banner,
         description: ws.description,
         visibility: ws.visibility,
         myRole: memberRecord?.role || "member",
